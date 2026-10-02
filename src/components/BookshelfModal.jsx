@@ -17,6 +17,7 @@ export default function BookshelfModal({
   isOpen,
   onClose,
   library,
+  settings,
   onSelectBook,
   onCreateBook,
   onDuplicateBook,
@@ -24,7 +25,10 @@ export default function BookshelfModal({
   onImportLibrary,
   onOpenFileFromDisk
 }) {
-  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, 280);
+  const animDuration = settings?.enableAnimations !== false
+    ? Number(settings?.animationDurationMs) || 280
+    : 0;
+  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, animDuration);
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newGenre, setNewGenre] = useState('Thriller / Mistero');

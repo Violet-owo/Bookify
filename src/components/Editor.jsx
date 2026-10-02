@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { audioEngine } from '../utils/audioEngine';
-import { checkTextChunk, enhanceParagraph } from '../utils/aiService';
+import { checkTextChunk, enhanceParagraph, rewriteSuggestion, buildNovelContext } from '../utils/aiService';
 import { extractBibleEntities } from '../utils/bibleCompanion';
+import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
+import DiffViewer from './DiffViewer';
+import AiCircleLoader from './AiCircleLoader';
 import { 
   Sparkles, 
   Check, 
@@ -36,6 +39,7 @@ export default function Editor({
   // Suggestions from Chunk Checking
   const [activeSuggestions, setActiveSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+  const [suggestionReview, setSuggestionReview] = useState(null);
   const [isCheckingChunk, setIsCheckingChunk] = useState(false);
   const [isCompanionExpanded, setIsCompanionExpanded] = useState(false);
   const [bibleToast, setBibleToast] = useState(null);
@@ -43,8 +47,29 @@ export default function Editor({
 
   // Selection AI floating menu
   const [selectionRange, setSelectionRange] = useState(null);
+  const [isChapterRefinementActive, setIsChapterRefinementActive] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [enhancementElapsedSeconds, setEnhancementElapsedSeconds] = useState(0);
   const [enhancedResult, setEnhancedResult] = useState(null);
+  const [enhancementError, setEnhancementError] = useState(null);
+  const enhancementAbortControllerRef = useRef(null);
+  const [closingSelectionRange, setClosingSelectionRange] = useState(null);
+  const selectionAnimationDuration = settings.enableAnimations !== false
+    ? Number(settings.animationDurationMs) || 220
+    : 0;
+  const { shouldRender: shouldShowSelectionPopup, isExiting: isSelectionPopupExiting } = useAnimatedVisibility(
+    Boolean(selectionRange),
+    selectionAnimationDuration
+  );
+
+  useEffect(() => {
+    if (!isEnhancing) return undefined;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setEnhancementElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isEnhancing]);
 
   // Active Typing Focus & Blur state
   const [isTypingFocusActive, setIsTypingFocusActive] = useState(false);
@@ -90,7 +115,6 @@ export default function Editor({
     const markerTop = marker.offsetTop;
     const markerHeight = marker.offsetHeight || 38;
     const totalHeight = mirror.offsetHeight || mirror.scrollHeight || 400;
-
     return { top: markerTop, height: markerHeight, totalHeight };
   }, []);
 
@@ -114,7 +138,6 @@ export default function Editor({
     const visualTotalLines = Math.max(visualCurLine, Math.floor(totalHeight / singleLinePx) + 1);
 
     if (settings?.lineHUDCountMode === 'paragraphs') {
-      setCursorLine(curParagraph);
       setTotalLines(allParagraphs);
     } else {
       setCursorLine(visualCurLine);
@@ -458,6 +481,7 @@ export default function Editor({
       // Ctrl+S: Save to PC
       if (key === 's') {
         e.preventDefault();
+        e.stopPropagation();
         if (onSaveToDisk) onSaveToDisk();
       }
       // Ctrl+R: Revisione / Editor Room
@@ -470,11 +494,11 @@ export default function Editor({
         e.preventDefault();
         if (onOpenBible) onOpenBible();
       }
-      // Ctrl+A / Ctrl+Enter / Ctrl+Y: Accept top AI suggestion
-      else if ((key === 'a' || e.key === 'Enter' || key === 'y') && activeSuggestions.length > 0) {
+      // Ctrl+Enter / Ctrl+Y: Review the selected AI suggestion
+      else if ((e.key === 'Enter' || key === 'y') && activeSuggestions.length > 0) {
         e.preventDefault();
         const target = selectedSuggestion || activeSuggestions[0];
-        if (target) applySuggestion(target);
+        if (target) reviewSuggestion(target);
       }
       // Ctrl+D: Dismiss suggestion
       else if (key === 'd' && selectedSuggestion) {
@@ -559,7 +583,10 @@ export default function Editor({
           settings
         });
 
-        if (bibleRes && bibleRes.newlyDiscoveredCount > 0) {
+        if (bibleRes?.error) {
+          setBibleToast(`Bibbia non aggiornata: ${bibleRes.error}`);
+          setTimeout(() => setBibleToast(null), 6000);
+        } else if (bibleRes && bibleRes.newlyDiscoveredCount > 0) {
           onUpdateBible(bibleRes.updatedBible);
           const firstChar = bibleRes.extracted.characters[0]?.name;
           const firstLoc = bibleRes.extracted.locations[0]?.title;
@@ -575,31 +602,154 @@ export default function Editor({
     }
   };
 
-  // Apply suggestion replacement
-  const applySuggestion = (suggestion) => {
-    if (!textareaRef.current || !suggestion) return;
-    const currentText = textareaRef.current.value;
-    
-    if (currentText.includes(suggestion.original)) {
-      const newText = currentText.replace(suggestion.original, suggestion.suggestion);
-      onUpdateContent(newText);
+  const reviewSuggestion = async (suggestion) => {
+    if (!textareaRef.current) return;
+    const text = textareaRef.current.value || '';
+    const cleanOriginal = (suggestion?.original || '').trim();
+
+    // Smart locator
+    let matchStart = -1;
+    if (cleanOriginal) {
+      matchStart = text.lastIndexOf(cleanOriginal);
+      if (matchStart < 0) {
+        const unquoted = cleanOriginal.replace(/^[«"“'—–\s-]+|[»"”'—–\s.-]+$/g, '').trim();
+        if (unquoted.length > 5) matchStart = text.lastIndexOf(unquoted);
+      }
+      if (matchStart < 0 && (cleanOriginal.includes('...') || cleanOriginal.includes('…'))) {
+        const parts = cleanOriginal.split(/\.{3}|…/).map(p => p.trim()).filter(p => p.length > 4);
+        for (const part of parts) {
+          const idx = text.lastIndexOf(part);
+          if (idx >= 0) { matchStart = idx; break; }
+        }
+      }
+      if (matchStart < 0) {
+        const normTarget = cleanOriginal.replace(/\s+/g, ' ');
+        const normText = text.replace(/\s+/g, ' ');
+        const nIdx = normText.lastIndexOf(normTarget);
+        if (nIdx >= 0) {
+          const words = normTarget.split(' ').slice(0, 3).join(' ');
+          matchStart = text.lastIndexOf(words);
+        }
+      }
     }
 
-    dismissSuggestion(suggestion);
+    let sentence = cleanOriginal;
+    let start = 0;
+    let end = 0;
+    const isLocated = matchStart >= 0;
+
+    if (isLocated) {
+      const precedingText = text.slice(0, matchStart);
+      const lastBoundary = Math.max(
+        precedingText.lastIndexOf('\n'),
+        precedingText.lastIndexOf('.'),
+        precedingText.lastIndexOf('!'),
+        precedingText.lastIndexOf('?'),
+        precedingText.lastIndexOf('…')
+      );
+      start = lastBoundary + 1;
+      while (/\s/.test(text[start] || '') && text[start] !== '\n') start += 1;
+
+      const matchedLen = Math.min(cleanOriginal.length || 1, text.length - matchStart);
+      const matchEnd = matchStart + matchedLen;
+      const followingText = text.slice(matchEnd);
+      const nextBoundary = followingText.search(/[.!?…\n]/);
+      end = nextBoundary < 0 ? text.length : matchEnd + nextBoundary + (followingText[nextBoundary] === '\n' ? 0 : 1);
+      sentence = text.slice(start, end).trimEnd();
+    }
+
+    const review = {
+      suggestion,
+      start,
+      end: isLocated ? (start + sentence.length) : 0,
+      original: sentence,
+      improved: sentence,
+      explanation: suggestion?.reason || '',
+      isLocated,
+      fallback: false,
+      loading: true,
+      error: !isLocated ? 'Nota: La frase non è stata localizzata esattamente nel capitolo. Puoi comunque confrontare o modificare la proposta.' : null
+    };
+    setSelectedSuggestion(suggestion);
+    setSuggestionReview(review);
+
+    // Call AI to rewrite based on the editor recommendation
+    try {
+      const result = await rewriteSuggestion({
+        sentence,
+        context: text.slice(Math.max(0, start - 350), Math.min(text.length, end + 350)),
+        bookContext: buildNovelContext(book, chapter?.id),
+        original: suggestion?.original,
+        reason: suggestion?.reason,
+        suggestion: suggestion?.suggestion,
+        settings
+      });
+      setSuggestionReview(current => current ? {
+        ...current,
+        ...result,
+        improved: result.improved && result.improved.trim() ? result.improved.trim() : current.original,
+        loading: false
+      } : current);
+    } catch (err) {
+      setSuggestionReview(curr => curr ? { ...curr, loading: false, error: err.message || 'Errore riscrittura AI.' } : curr);
+    }
   };
 
-  // Apply all detected suggestions in one click
-  const applyAllSuggestions = () => {
-    if (!textareaRef.current || activeSuggestions.length === 0) return;
-    let currentText = textareaRef.current.value;
-    activeSuggestions.forEach(s => {
-      if (currentText.includes(s.original)) {
-        currentText = currentText.replace(s.original, s.suggestion);
+  const requestEditorAiAlternative = async () => {
+    if (!suggestionReview || !textareaRef.current) return;
+    setSuggestionReview(curr => ({ ...curr, loading: true, error: null }));
+    const text = textareaRef.current.value || '';
+
+    try {
+      const result = await rewriteSuggestion({
+        sentence: suggestionReview.original,
+        context: text.slice(Math.max(0, suggestionReview.start - 350), Math.min(text.length, suggestionReview.end + 350)),
+        bookContext: buildNovelContext(book, chapter?.id),
+        original: suggestionReview.suggestion?.original,
+        reason: suggestionReview.suggestion?.reason,
+        suggestion: suggestionReview.suggestion?.suggestion,
+        settings
+      });
+      setSuggestionReview(current => current
+        ? {
+            ...current,
+            ...result,
+            improved: result.improved && result.improved.trim() ? result.improved : current.improved,
+            loading: false
+          }
+        : current);
+    } catch (error) {
+      setSuggestionReview(current => current
+        ? { ...current, loading: false, error: error.message || 'Impossibile generare una variante alternativa.' }
+        : current);
+    }
+  };
+
+  const applyReviewedSuggestion = () => {
+    if (!suggestionReview || suggestionReview.loading || !textareaRef.current) return;
+    const currentText = textareaRef.current.value || '';
+    const { start, end, original, improved, isLocated, suggestion } = suggestionReview;
+
+    if (isLocated && currentText.slice(start, end) === original) {
+      const updated = currentText.slice(0, start) + improved + currentText.slice(end);
+      onUpdateContent(updated);
+    } else {
+      const cleanOrig = suggestion?.original || original;
+      if (cleanOrig && currentText.includes(cleanOrig)) {
+        const idx = currentText.lastIndexOf(cleanOrig);
+        const updated = currentText.slice(0, idx) + improved + currentText.slice(idx + cleanOrig.length);
+        onUpdateContent(updated);
+      } else {
+        setSuggestionReview(current => ({
+          ...current,
+          error: 'La frase nel capitolo è cambiata. Puoi copiare la proposta e incollarla direttamente nel testo.'
+        }));
+        return;
       }
-    });
-    onUpdateContent(currentText);
-    setActiveSuggestions([]);
-    setSelectedSuggestion(null);
+    }
+
+    dismissSuggestion(suggestionReview.suggestion);
+    setSuggestionReview(null);
   };
 
   // Dismiss suggestion
@@ -615,43 +765,90 @@ export default function Editor({
   const handleSelectText = () => {
     centerActiveLine(false);
     if (!textareaRef.current) return;
+    setIsChapterRefinementActive(false);
     const { selectionStart, selectionEnd, value } = textareaRef.current;
     
     if (selectionEnd - selectionStart > 12) {
       const selected = value.slice(selectionStart, selectionEnd);
-      setSelectionRange({ start: selectionStart, end: selectionEnd, text: selected });
-    } else {
-      setSelectionRange(null);
+      const nextRange = { start: selectionStart, end: selectionEnd, text: selected };
+      setSelectionRange(nextRange);
+      setClosingSelectionRange(nextRange);
       setEnhancedResult(null);
+      setEnhancementError(null);
+    } else {
+      closeSelectionPopup();
+      setEnhancedResult(null);
+      setEnhancementError(null);
     }
   };
 
-  const handleRunEnhancement = async (mode) => {
-    if (!selectionRange?.text) return;
+  const closeSelectionPopup = () => {
+    if (selectionRange) setClosingSelectionRange(selectionRange);
+    setSelectionRange(null);
+    setIsChapterRefinementActive(false);
+  };
+
+  const handleRunEnhancement = async (mode, textOverride = null) => {
+    const sourceText = textOverride ?? selectionRange?.text;
+    if (!sourceText) return;
+    const abortController = new AbortController();
+    enhancementAbortControllerRef.current = abortController;
+    setEnhancementElapsedSeconds(0);
     setIsEnhancing(true);
+    setEnhancedResult(null);
+    setEnhancementError(null);
     try {
       const result = await enhanceParagraph({
-        text: selectionRange.text,
+        text: sourceText,
         mode,
-        settings
+        settings,
+        bookContext: buildNovelContext(book, chapter?.id),
+        signal: abortController.signal
       });
-      setEnhancedResult(result);
-    } catch (err) {
-      console.error('Failed to enhance paragraph', err);
+      setEnhancedResult({ ...result, mode });
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        setEnhancementError('Richiesta annullata.');
+        return;
+      }
+      console.error('Failed to enhance paragraph', error);
+      setEnhancementError(error.message || 'Impossibile completare la revisione AI.');
     } finally {
+      if (enhancementAbortControllerRef.current === abortController) {
+        enhancementAbortControllerRef.current = null;
+      }
       setIsEnhancing(false);
     }
+  };
+
+  const handleCancelEnhancement = () => {
+    enhancementAbortControllerRef.current?.abort();
+  };
+
+  const handleRunChapterRefinement = async () => {
+    const chapterText = chapter?.content || '';
+    if (!chapterText.trim()) return;
+    setIsChapterRefinementActive(true);
+    const wholeChapterRange = { start: 0, end: chapterText.length, text: chapterText };
+    setSelectionRange(wholeChapterRange);
+    setClosingSelectionRange(wholeChapterRange);
+    await handleRunEnhancement('refinement', chapterText);
   };
 
   const handleApplyEnhanced = () => {
     if (!enhancedResult?.improved || !selectionRange) return;
     const current = textareaRef.current.value;
+    if (current.slice(selectionRange.start, selectionRange.end) !== selectionRange.text) {
+      setEnhancementError('Il testo selezionato è cambiato durante la revisione. Selezionalo di nuovo prima di applicare la proposta.');
+      return;
+    }
     const before = current.slice(0, selectionRange.start);
     const after = current.slice(selectionRange.end);
     const updated = before + enhancedResult.improved + after;
     onUpdateContent(updated);
-    setSelectionRange(null);
+    closeSelectionPopup();
     setEnhancedResult(null);
+    setEnhancementError(null);
   };
 
   // Initial and chapter change setup
@@ -677,6 +874,10 @@ export default function Editor({
     strong: { blur: '4.5px', opacity: 0.96 }
   };
   const currentIntensity = intensityMap[settings.lineFocusIntensity] || intensityMap.medium;
+  const visibleSelectionRange = selectionRange || (shouldShowSelectionPopup ? closingSelectionRange : null);
+  const isWholeChapterSelected = Boolean(
+    visibleSelectionRange && visibleSelectionRange.start === 0 && visibleSelectionRange.end === (chapter?.content || '').length
+  );
 
   return (
     <div 
@@ -837,9 +1038,9 @@ export default function Editor({
         />
 
         {/* Floating Selection AI Quick Actions */}
-        {selectionRange && (
+        {shouldShowSelectionPopup && visibleSelectionRange && (isChapterRefinementActive || !isWholeChapterSelected || isSelectionPopupExiting) && (
           <div 
-            className="glass-panel animate-fade-in"
+            className={`glass-panel selection-ai-popup ${isSelectionPopupExiting ? 'selection-ai-popup-exit' : ''}`}
             style={{
               position: 'fixed',
               bottom: '5.2rem',
@@ -850,23 +1051,27 @@ export default function Editor({
               display: 'flex',
               flexDirection: 'column',
               gap: '0.65rem',
-              maxWidth: '560px',
-              width: '90%',
+              maxWidth: isChapterRefinementActive ? activeMaxWidth : '560px',
+              maxHeight: '85vh',
+              overflowY: 'auto',
+              width: isChapterRefinementActive ? `min(${activeMaxWidth}, calc(100vw - 2rem))` : 'min(560px, calc(100vw - 2rem))',
+              pointerEvents: isSelectionPopupExiting ? 'none' : 'auto',
               boxShadow: '0 10px 35px rgba(0, 0, 0, 0.7)'
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.74rem', color: 'var(--accent-cyan)', fontWeight: '600' }}>
                 <Sparkles size={14} />
-                <span>Azioni Rapide Scrittore ({selectionRange.text.split(/\s+/).length} parole selezionate)</span>
+                <span>{isChapterRefinementActive ? 'Rifinitura del capitolo' : `Azioni Rapide Scrittore (${visibleSelectionRange.text.split(/\s+/).length} parole selezionate)`}</span>
               </div>
-              <button onClick={() => setSelectionRange(null)} style={{ color: 'var(--text-muted)' }}>
+              <button onClick={closeSelectionPopup} style={{ color: 'var(--text-muted)' }}>
                 <X size={14} />
               </button>
             </div>
 
             {/* Quick Action Buttons */}
-            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
+            {!isChapterRefinementActive && !isWholeChapterSelected && (
+              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
               <button
                 onClick={() => handleRunEnhancement('pacingBoost')}
                 disabled={isEnhancing}
@@ -920,24 +1125,57 @@ export default function Editor({
               >
                 <MessageSquare size={12} style={{ color: 'var(--accent-cyan)' }} /> Affila Dialogo
               </button>
-            </div>
-
-            {/* Enhanced Result Preview */}
-            {isEnhancing && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                <RefreshCw size={12} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
-                <span>Riscrivendo il passaggio con i canoni della suspense...</span>
               </div>
             )}
 
+            {/* Enhanced Result Preview */}
+            {isEnhancing && (
+              <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                <RefreshCw size={12} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
+                <span style={{ flex: 1 }}>
+                  {settings.aiProvider === 'ollama'
+                    ? `Richiesta inviata a Ollama. In attesa del modello da ${enhancementElapsedSeconds}s. La modalità API attuale non espone il progresso dei token.`
+                    : `Richiesta inviata al provider AI (${enhancementElapsedSeconds}s). In attesa della risposta...`}
+                </span>
+                <button type="button" onClick={handleCancelEnhancement} style={{ flexShrink: 0, color: 'var(--accent-coral)', fontSize: '0.72rem' }}>Annulla</button>
+              </div>
+            )}
+
+            {enhancementError && <p role="alert" style={{ margin: 0, color: 'var(--accent-coral)', fontSize: '0.76rem' }}>{enhancementError}</p>}
+
             {enhancedResult && (
               <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent-cyan)' }}>
-                <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontStyle: 'italic', marginBottom: '0.4rem', lineHeight: 1.5 }}>
-                  "{enhancedResult.improved}"
-                </div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.65rem' }}>
-                  {enhancedResult.explanation}
-                </div>
+                {enhancedResult.mode === 'refinement' ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '0.7rem', marginBottom: '0.65rem' }}>
+                    <label style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: '700' }}>
+                      Originale
+                      <textarea
+                        value={visibleSelectionRange.text}
+                        readOnly
+                        rows={14}
+                        style={{ boxSizing: 'border-box', width: '100%', height: 'min(52vh, 520px)', resize: 'vertical', padding: '0.75rem', lineHeight: 1.55, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xs)', fontFamily: 'var(--font-serif)', fontSize: '0.84rem' }}
+                      />
+                    </label>
+                    <label style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: '700' }}>
+                      Rifinitura, modificabile
+                      <textarea
+                        value={enhancedResult.improved}
+                        onChange={event => setEnhancedResult(current => ({ ...current, improved: event.target.value }))}
+                        rows={14}
+                        style={{ boxSizing: 'border-box', width: '100%', height: 'min(52vh, 520px)', resize: 'vertical', padding: '0.75rem', lineHeight: 1.55, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--accent-cyan)', borderRadius: 'var(--radius-xs)', fontFamily: 'var(--font-serif)', fontSize: '0.84rem' }}
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontStyle: 'italic', marginBottom: '0.4rem', lineHeight: 1.5 }}>
+                    "{enhancedResult.improved}"
+                  </div>
+                )}
+                {enhancedResult.explanation && (
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.65rem' }}>
+                    {enhancedResult.explanation}
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.45rem' }}>
                   <button
                     onClick={() => setEnhancedResult(null)}
@@ -959,11 +1197,161 @@ export default function Editor({
                       gap: '0.3rem'
                     }}
                   >
-                    <Check size={12} /> Sostituisci nel Testo
+                    <Check size={12} /> {enhancedResult.mode === 'refinement' ? 'Applica rifinitura' : 'Sostituisci nel testo'}
                   </button>
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {suggestionReview && (
+          <div
+            role="presentation"
+            onClick={() => setSuggestionReview(null)}
+            className="m3-modal-backdrop"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 320,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '1.25rem',
+              backgroundColor: 'rgba(10, 8, 6, 0.85)',
+              backdropFilter: 'blur(10px)'
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="suggestion-review-title"
+              onClick={event => event.stopPropagation()}
+              className="m3-popup-panel"
+              style={{
+                width: 'min(920px, 96vw)',
+                maxHeight: '90vh',
+                overflowY: 'auto',
+                padding: '1.5rem',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--accent-cyan-dim)',
+                borderRadius: 'var(--radius-md)',
+                boxShadow: '0 24px 70px rgba(0, 0, 0, 0.8)'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
+                <div>
+                  <h2 id="suggestion-review-title" style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Sparkles size={18} style={{ color: 'var(--accent-cyan)' }} />
+                    Rivedi e Confronta la Proposta AI
+                  </h2>
+                  <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{suggestionReview.suggestion?.reason}</p>
+                </div>
+                <button onClick={() => setSuggestionReview(null)} aria-label="Chiudi revisione" style={{ color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.35rem' }}>
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Visual Word-Diff Preview */}
+              <div style={{ marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: '700', color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                    Differenze nel testo (Parole Modificate)
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span style={{ color: 'var(--accent-coral)', textDecoration: 'line-through', marginRight: '8px' }}>Rosso = rimosso</span>
+                    <span style={{ color: 'var(--accent-green, #7da87b)', fontWeight: '600' }}>Verde = inserito</span>
+                  </span>
+                </div>
+                {suggestionReview.loading ? (
+                  <div style={{ padding: '1.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--accent-cyan)' }}>
+                    <AiCircleLoader
+                      compact={true}
+                      size={32}
+                      message="L'AI sta riscrivendo la frase in prosa narrativa..."
+                      submessage="Elaborazione delle variazioni e mantenimento dello stile"
+                    />
+                  </div>
+                ) : (
+                  <DiffViewer original={suggestionReview.original} modified={suggestionReview.improved} />
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '1rem' }}>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: '700' }}>
+                  Originale nel capitolo
+                  <textarea
+                    value={suggestionReview.original}
+                    readOnly
+                    rows={5}
+                    style={{ width: '100%', resize: 'vertical', padding: '0.75rem', lineHeight: 1.6, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
+                  />
+                </label>
+                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--accent-cyan)', fontSize: '0.78rem', fontWeight: '700' }}>
+                  Proposta AI (modificabile prima di applicare)
+                  <textarea
+                    value={suggestionReview.loading ? 'Generazione della riscrittura in corso...' : suggestionReview.improved}
+                    disabled={suggestionReview.loading}
+                    onChange={event => setSuggestionReview(current => ({ ...current, improved: event.target.value }))}
+                    rows={5}
+                    style={{ width: '100%', resize: 'vertical', padding: '0.75rem', lineHeight: 1.6, color: suggestionReview.loading ? 'var(--text-muted)' : 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--accent-cyan)', borderRadius: 'var(--radius-sm)', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
+                  />
+                </label>
+              </div>
+              {suggestionReview.explanation && (
+                <p style={{ marginTop: '0.8rem', color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.5, background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--accent-amber)' }}>
+                  <strong>Spiegazione editoriale:</strong> {suggestionReview.explanation}
+                </p>
+              )}
+              {suggestionReview.error && <p role="alert" style={{ color: 'var(--accent-coral)', fontSize: '0.8rem', marginTop: '0.8rem' }}>{suggestionReview.error}</p>}
+              {suggestionReview.fallback && <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.5rem' }}>Nessun provider AI configurato: proposta generata con euristiche locali.</p>}
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.65rem', marginTop: '1.25rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.9rem' }}>
+                <div>
+                  <button
+                    type="button"
+                    onClick={requestEditorAiAlternative}
+                    disabled={suggestionReview.loading}
+                    className="m3-btn m3-btn-outlined"
+                    title="Chiedi all'AI di generare una nuova variante alternativa per questa frase"
+                    style={{ 
+                      padding: '0.45rem 0.85rem', 
+                      fontSize: '0.74rem',
+                      color: 'var(--accent-amber)',
+                      borderColor: 'rgba(229, 169, 83, 0.3)'
+                    }}
+                  >
+                    <Sparkles size={13} className="m3-icon-bounce" />
+                    <span>{suggestionReview.loading ? 'Generando variante...' : 'Altra variante AI'}</span>
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                  <button 
+                    onClick={() => setSuggestionReview(null)} 
+                    className="m3-btn m3-btn-outlined"
+                    style={{ padding: '0.45rem 0.85rem', color: 'var(--text-secondary)' }}
+                  >
+                    Annulla
+                  </button>
+                  <button
+                    onClick={applyReviewedSuggestion}
+                    disabled={suggestionReview.loading || !suggestionReview.improved.trim() || suggestionReview.improved === suggestionReview.original}
+                    className="m3-btn m3-btn-filled"
+                    style={{ 
+                      padding: '0.5rem 1.1rem', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '0.45rem', 
+                      fontWeight: '700', 
+                      opacity: (suggestionReview.loading || !suggestionReview.improved.trim() || suggestionReview.improved === suggestionReview.original) ? 0.5 : 1 
+                    }}
+                  >
+                    <Check size={15} /> Applica al testo
+                  </button>
+                </div>
+              </div>
+            </section>
           </div>
         )}
 
@@ -1085,24 +1473,6 @@ export default function Editor({
                   >
                     <Feather size={11} style={{ color: 'var(--accent-amber)' }} /> Formatta
                   </button>
-                  {activeSuggestions.length > 1 && (
-                    <button
-                      onClick={applyAllSuggestions}
-                      title="Applica tutte le correzioni nel testo"
-                      style={{
-                        padding: '0.25rem 0.6rem',
-                        fontSize: '0.72rem',
-                        fontWeight: '700',
-                        borderRadius: 'var(--radius-xs)',
-                        backgroundColor: 'var(--accent-cyan)',
-                        color: '#1a1612',
-                        border: 'none',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      Correggi Tutti
-                    </button>
-                  )}
                   <button 
                     onClick={() => setActiveSuggestions([])}
                     title="Chiudi pannello suggerimenti"
@@ -1127,20 +1497,10 @@ export default function Editor({
                       gap: '0.4rem'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.88rem' }}>
-                        <span style={{ color: 'var(--accent-coral)', textDecoration: 'line-through', opacity: 0.85 }}>
-                          {item.original}
-                        </span>
-                        <ArrowRight size={13} style={{ color: 'var(--text-muted)' }} />
-                        <span style={{ color: 'var(--accent-cyan)', fontWeight: '700' }}>
-                          {item.suggestion}
-                        </span>
-                      </div>
-
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                       <div style={{ display: 'flex', gap: '0.35rem' }}>
                         <button
-                          onClick={() => applySuggestion(item)}
+                          onClick={() => reviewSuggestion(item)}
                           className="m3-chip"
                           style={{
                             padding: '0.2rem 0.55rem',
@@ -1150,7 +1510,7 @@ export default function Editor({
                             borderColor: 'var(--accent-cyan)'
                           }}
                         >
-                          <Check size={12} /> Correggi
+                          <ArrowRight size={12} /> Rivedi frase
                         </button>
                         <button
                           onClick={() => dismissSuggestion(item)}
@@ -1219,22 +1579,31 @@ export default function Editor({
                 <Feather size={12} style={{ color: 'var(--accent-amber)' }} />
                 <span>Formatta Prosa</span>
               </button>
-
-              <div
-                className="m3-chip"
-                style={{
-                  padding: '0.38rem 0.75rem',
-                  backgroundColor: 'var(--bg-elevated)',
-                  color: 'var(--text-secondary)',
-                  fontSize: '0.73rem',
-                  boxShadow: '0 4px 15px rgba(0, 0, 0, 0.4)'
-                }}
-              >
-                <Sparkles size={12} style={{ color: 'var(--accent-cyan)' }} />
-                <span>AI Companion: Prosa Impeccabile</span>
-              </div>
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={handleRunChapterRefinement}
+            disabled={isEnhancing || !(chapter?.content || '').trim()}
+            title="Rifinisci tutto il capitolo mantenendo trama, dettagli e voce narrativa"
+            className="m3-chip"
+            style={{
+              padding: '0.38rem 0.75rem',
+              backgroundColor: 'var(--accent-cyan)',
+              color: '#1a1612',
+              fontSize: '0.73rem',
+              fontWeight: '700',
+              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.4)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              opacity: isEnhancing ? 0.65 : 1
+            }}
+          >
+            <Feather size={12} />
+            <span>{isEnhancing && isChapterRefinementActive ? 'Rifinitura...' : 'Rifinitura'}</span>
+          </button>
         </div>
 
         {/* Dynamic & Configurable Line Indicator HUD (Material 3 Expressive) */}

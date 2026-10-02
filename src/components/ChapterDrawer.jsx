@@ -16,13 +16,17 @@ export default function ChapterDrawer({
   isOpen,
   onClose,
   book,
+  settings,
   currentChapterId,
   onSelectChapter,
   onAddChapter,
   onDeleteChapter,
   onUpdateBookTitle
 }) {
-  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, 280);
+  const animDuration = settings?.enableAnimations !== false
+    ? Number(settings?.animationDurationMs) || 280
+    : 0;
+  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, animDuration);
   const [editingTitle, setEditingTitle] = useState(false);
   const [tempTitle, setTempTitle] = useState(book?.title || '');
 

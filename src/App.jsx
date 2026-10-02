@@ -67,18 +67,25 @@ export default function App() {
   }, [settings.theme]);
 
   // Save to Disk File (Manual / Ctrl+S)
-  const handleSaveToDisk = async () => {
+  const handleSaveToDisk = useCallback(async () => {
     if (!activeBook) return;
     setIsAutosaving(true);
-    const res = await saveProjectToDiskFile(activeBook);
-    setIsAutosaving(false);
-    if (res.success) {
-      setConnectedFileName(res.fileName);
-      setLastSavedTime(new Date());
-      setSaveToast(`💾 Salvato su file locale: "${res.fileName}"`);
-      setTimeout(() => setSaveToast(null), 3500);
+    try {
+      const res = await saveProjectToDiskFile(activeBook);
+      if (res.success) {
+        setConnectedFileName(res.fileName);
+        setLastSavedTime(new Date());
+        setSaveToast(`${res.isDirectDisk ? 'Salvato' : 'Scaricato'}: "${res.fileName}"`);
+        setTimeout(() => setSaveToast(null), 3500);
+      }
+    } catch (error) {
+      console.error('Errore salvataggio progetto:', error);
+      setSaveToast(`Salvataggio non riuscito: ${error.message || 'errore sconosciuto'}`);
+      setTimeout(() => setSaveToast(null), 5000);
+    } finally {
+      setIsAutosaving(false);
     }
-  };
+  }, [activeBook]);
 
   // Autosave trigger with debounce
   const triggerAutosave = useCallback((updatedLibrary) => {
@@ -108,18 +115,6 @@ export default function App() {
     }, intervalMs);
     return () => clearInterval(timer);
   }, [settings.autosaveEnabled, settings.autosaveIntervalSeconds, library, activeBook]);
-
-  // Global Ctrl+S shortcut for instant save
-  useEffect(() => {
-    const handleGlobalKeyDown = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        handleSaveToDisk();
-      }
-    };
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [activeBook, library]);
 
   // Open .bookify or .json Project File from PC Disk
   const handleOpenProjectFromDisk = async () => {
@@ -401,10 +396,36 @@ export default function App() {
   };
 
   // Apply fix from review modal
-  const handleApplyFix = (orig, fix) => {
-    if (!currentChapter) return;
-    const updatedContent = (currentChapter.content || '').replace(orig, fix);
-    handleUpdateContent(updatedContent);
+  const handleApplyFix = (orig, fix, start, end, targetChapterId = currentChapter?.id) => {
+    if (!activeBook || !targetChapterId) return;
+    if (targetChapterId === currentChapter?.id) {
+      const content = currentChapter.content || '';
+      if (content.slice(start, end) !== orig) return;
+      handleUpdateContent(content.slice(0, start) + fix + content.slice(end));
+      return;
+    }
+
+    setLibrary(previous => {
+      let didUpdate = false;
+      const books = previous.books.map(book => {
+        if (book.id !== activeBook.id) return book;
+        const chapters = (book.chapters || []).map(chapter => {
+          const content = chapter.content || '';
+          if (chapter.id !== targetChapterId || content.slice(start, end) !== orig) return chapter;
+          didUpdate = true;
+          return {
+            ...chapter,
+            content: content.slice(0, start) + fix + content.slice(end),
+            updatedAt: new Date().toISOString()
+          };
+        });
+        return didUpdate ? { ...book, chapters, updatedAt: new Date().toISOString() } : book;
+      });
+      if (!didUpdate) return previous;
+      const updated = { ...previous, books };
+      triggerAutosave(updated);
+      return updated;
+    });
   };
 
   // Toggle settings
@@ -527,7 +548,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleGlobalKeys);
     return () => window.removeEventListener('keydown', handleGlobalKeys);
-  }, []);
+  }, [activeBook, library, handleSaveToDisk]);
 
   // Drag and Drop support for .bookify and .json files
   useEffect(() => {
@@ -723,6 +744,7 @@ export default function App() {
         isOpen={isBookshelfOpen}
         onClose={() => setIsBookshelfOpen(false)}
         library={library}
+        settings={settings}
         onSelectBook={handleSelectBook}
         onCreateBook={handleCreateBook}
         onDuplicateBook={handleDuplicateBook}
@@ -736,6 +758,7 @@ export default function App() {
         isOpen={isBibleOpen}
         onClose={() => setIsBibleOpen(false)}
         book={activeBook}
+        settings={settings}
         onUpdateBible={handleUpdateBible}
       />
 
@@ -744,6 +767,7 @@ export default function App() {
         isOpen={isChapterDrawerOpen}
         onClose={() => setIsChapterDrawerOpen(false)}
         book={activeBook}
+        settings={settings}
         currentChapterId={currentChapterId}
         onSelectChapter={setCurrentChapterId}
         onAddChapter={handleAddChapter}
@@ -756,6 +780,7 @@ export default function App() {
         isOpen={isReviewModalOpen}
         onClose={() => setIsReviewModalOpen(false)}
         chapter={currentChapter}
+        book={activeBook}
         settings={settings}
         onApplyFix={handleApplyFix}
         onAppendCliffhanger={handleAppendCliffhanger}

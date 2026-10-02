@@ -1,5 +1,123 @@
 import { analyzeItalianOrthography } from './italianLexicon';
 
+const AI_USAGE_EVENT = 'bookify-ai-usage-updated';
+
+function getAIUsageStorageKey() {
+  return `bookify_ai_usage_${new Date().toISOString().slice(0, 7)}`;
+}
+
+export function readAIUsage() {
+  try {
+    return JSON.parse(localStorage.getItem(getAIUsageStorageKey()) || '{"requests":0,"meteredRequests":0,"promptTokens":0,"completionTokens":0,"totalTokens":0,"providers":{}}');
+  } catch {
+    return { requests: 0, meteredRequests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, providers: {} };
+  }
+}
+
+async function recordAIUsage(response, url) {
+  try {
+    const payload = await response.clone().json();
+    const usage = payload.usage || payload.usageMetadata || {};
+    const promptTokens = Number(usage.prompt_tokens ?? usage.promptTokenCount ?? usage.input_tokens ?? payload.prompt_eval_count ?? 0);
+    const completionTokens = Number(usage.completion_tokens ?? usage.candidatesTokenCount ?? usage.output_tokens ?? payload.eval_count ?? 0);
+    const reportedTotal = Number(usage.total_tokens ?? usage.totalTokenCount ?? usage.total_tokens_count ?? 0);
+    const totalTokens = reportedTotal || promptTokens + completionTokens;
+    const host = new URL(url).hostname;
+    const provider = host === 'generativelanguage.googleapis.com'
+      ? 'gemini'
+      : /localhost|127\.0\.0\.1/.test(host) ? 'ollama' : 'openai';
+    const stats = readAIUsage();
+    const providerStats = stats.providers[provider] || { requests: 0, meteredRequests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const metered = totalTokens > 0;
+    Object.assign(providerStats, {
+      requests: providerStats.requests + 1,
+      meteredRequests: providerStats.meteredRequests + Number(metered),
+      promptTokens: providerStats.promptTokens + promptTokens,
+      completionTokens: providerStats.completionTokens + completionTokens,
+      totalTokens: providerStats.totalTokens + totalTokens
+    });
+    Object.assign(stats, {
+      requests: stats.requests + 1,
+      meteredRequests: stats.meteredRequests + Number(metered),
+      promptTokens: stats.promptTokens + promptTokens,
+      completionTokens: stats.completionTokens + completionTokens,
+      totalTokens: stats.totalTokens + totalTokens,
+      providers: { ...stats.providers, [provider]: providerStats }
+    });
+    localStorage.setItem(getAIUsageStorageKey(), JSON.stringify(stats));
+    window.dispatchEvent(new Event(AI_USAGE_EVENT));
+  } catch {}
+}
+
+async function fetchWithTransientRetry(url, options, attempts = 3) {
+  let response;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      response = await fetch(url, options);
+    } catch (error) {
+      if (error.name === 'AbortError') throw error;
+      if (attempt === attempts - 1) throw error;
+      await new Promise(resolve => setTimeout(resolve, Math.min(1000 * (2 ** attempt), 8000)));
+      continue;
+    }
+
+    if (![500, 502, 503, 504].includes(response.status) || attempt === attempts - 1) {
+      if (response.ok) await recordAIUsage(response, url);
+      return response;
+    }
+    const retryAfter = response.headers.get('Retry-After');
+    const retryAfterMs = Number.isFinite(Number(retryAfter))
+      ? Number(retryAfter) * 1000
+      : Date.parse(retryAfter) - Date.now();
+    const backoffMs = Math.min(1000 * (2 ** attempt), 8000);
+    await new Promise(resolve => setTimeout(resolve, Math.max(backoffMs, retryAfterMs > 0 ? retryAfterMs : 0)));
+  }
+  return response;
+}
+
+export async function fetchAIWithUsage(url, options) {
+  return fetchWithTransientRetry(url, options);
+}
+
+function getTemporaryServiceError(provider, status) {
+  if (status === 429) {
+    return `${provider} ha raggiunto un limite temporaneo di richieste (HTTP 429). Attendi prima di riprovare.`;
+  }
+  if ([500, 502, 503, 504].includes(status)) {
+    return `${provider} momentaneamente non disponibile (HTTP ${status}) dopo più tentativi. Riprova tra poco.`;
+  }
+  return `${provider} ha rifiutato la richiesta (HTTP ${status}).`;
+}
+
+async function getServiceErrorMessage(response, provider) {
+  try {
+    const data = await response.clone().json();
+    const detail = data.error?.message || data.message;
+    if (detail) return `${provider} (HTTP ${response.status}): ${detail}`;
+  } catch {}
+  return getTemporaryServiceError(provider, response.status);
+}
+
+function getGeminiText(data) {
+  return (data.candidates || [])
+    .flatMap(candidate => candidate.content?.parts || [])
+    .map(part => typeof part.text === 'string' ? part.text : '')
+    .filter(Boolean)
+    .join('')
+    .trim();
+}
+
+function getGeminiOutputError(data, task) {
+  const reason = data.candidates?.[0]?.finishReason;
+  if (reason === 'MAX_TOKENS') {
+    return `Gemini ha raggiunto il proprio massimo tecnico di output per ${task}. Il tetto applicativo è stato rimosso; il modello mantiene un limite interno alla singola risposta.`;
+  }
+  if (reason === 'SAFETY' || data.promptFeedback?.blockReason) {
+    return `Gemini ha bloccato la risposta per i filtri di sicurezza (${reason || data.promptFeedback.blockReason}).`;
+  }
+  return `Gemini non ha restituito un report leggibile per ${task} (${reason || 'risposta vuota o non valida'}). Riprova l'analisi.`;
+}
+
 /**
  * 1. Live Chunk Checking (Subtle Inline Assistance)
  * Evaluates the recent paragraph against spelling, bestseller pacing & Italian narrative rules.
@@ -56,11 +174,95 @@ export async function checkTextChunk({ recentText, contextWindow = '', settings 
   return merged;
 }
 
+export async function rewriteSuggestion({ sentence, context, bookContext = '', original, reason, suggestion, settings = {} }) {
+  const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
+  const canUseGemini = aiProvider === 'gemini' && geminiApiKey;
+  const canUseCompatible = (aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama';
+
+  if (!canUseGemini && !canUseCompatible) {
+    const isActionable = suggestion && !/riscrivi|descrivi|mostra/i.test(suggestion);
+    return {
+      improved: isActionable && original ? sentence.replace(original, suggestion) : sentence,
+      explanation: 'Configura un provider AI per generare una revisione contestuale. Puoi comunque modificare il testo proposto.',
+      fallback: true
+    };
+  }
+
+  const prompt = `Sei un editor letterario italiano prudente. Valuta la nota editoriale come un'ipotesi, non come un ordine: modifica la frase solo se la nota e' davvero pertinente. Correggi solo il problema individuato, con interventi minimi. Conserva significato, punto di vista, tempo verbale, voce e intenzione dell'autrice. Non aggiungere fatti, immagini, emozioni o dettagli non presenti nel contesto. Se la frase funziona gia', restituiscila invariata.
+
+CONTESTO NARRATIVO (solo per comprendere riferimenti e continuita'):
+"""${context}"""
+
+CONTESTO DEL ROMANZO:
+"""${bookContext}"""
+
+FRASE ESATTA DA VALUTARE:
+"""${sentence}"""
+
+NOTA DELL'EDITOR:
+${reason || suggestion || 'Verifica ortografia e grammatica.'}
+
+Restituisci esclusivamente JSON: {"improved":"frase intera, anche invariata se non serve intervenire","explanation":"motivo breve e concreto"}`;
+
+  let responseText;
+  let result;
+  if (canUseGemini) {
+    const modelName = geminiModel || 'gemini-1.5-flash';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
+    const response = await fetchWithTransientRetry(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.15, maxOutputTokens: 700 }
+      })
+    });
+    if (!response.ok) throw new Error(getTemporaryServiceError('Gemini', response.status));
+    const data = await response.json();
+    responseText = getGeminiText(data);
+  } else {
+    const endpoint = (aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint).replace(/\/+$/, '');
+    const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
+    const response = await fetchWithTransientRetry(`${endpoint}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key !== 'ollama' ? { Authorization: `Bearer ${key}` } : {})
+      },
+      body: JSON.stringify({
+        model: (aiProvider === 'ollama' ? ollamaModel : openaiModel) || 'gpt-4o-mini',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.15,
+        ...(aiProvider === 'ollama' ? { think: false } : {}),
+        ...(aiProvider !== 'ollama' ? { max_tokens: 700 } : {})
+      })
+    });
+    if (!response.ok) throw new Error(getTemporaryServiceError(aiProvider, response.status));
+    const data = await response.json();
+    const content = data.choices?.[0]?.message?.content || '';
+    if (aiProvider === 'ollama') {
+      const cleanedContent = content.replace(/^```(?:text|markdown)?\s*|\s*```$/gi, '').trim();
+      const parsedContent = parseJsonSafe(extractJsonFromMarkdown(cleanedContent), null);
+      result = parsedContent?.improved
+        ? parsedContent
+        : { improved: cleanedContent, explanation: '' };
+    } else {
+      responseText = extractJsonFromMarkdown(content);
+    }
+  }
+
+  if (aiProvider !== 'ollama') result = parseJsonSafe(responseText, null);
+  if (!result?.improved || typeof result.improved !== 'string') {
+    throw new Error('La risposta AI non contiene una revisione valida.');
+  }
+  return result;
+}
+
 /**
  * 2. Full Chapter Comprehensive Review ("Stanza dell'Editor")
  * Deep literary assessment focusing on narrative pacing, Show Don't Tell, and tension.
  */
-export async function reviewChapterContent({ chapterText, chapterTitle, settings }) {
+export async function reviewChapterContent({ chapterText, chapterTitle, settings, bookContext = '', strict = false }) {
   if (!chapterText || chapterText.trim().length < 25) {
     return {
       stats: { wordCount: 0, readingTimeMin: 0, sentenceCount: 0, avgWordsPerSentence: 0 },
@@ -71,9 +273,11 @@ export async function reviewChapterContent({ chapterText, chapterTitle, settings
         cliffhangerSuggestions: []
       },
       showDontTell: [],
+      craft: [],
       orthography: [],
       rhythm: [],
       temporalCoherence: [],
+      source: 'local',
       stylisticNotes: [{ title: 'Inizia a scrivere', note: 'Lascia scorrere la prima bozza, poi torna qui per affinare il capitolo come un vero romanzo.' }]
     };
   }
@@ -81,23 +285,127 @@ export async function reviewChapterContent({ chapterText, chapterTitle, settings
   const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
 
   if (aiProvider === 'gemini' && geminiApiKey) {
-    try {
-      return await reviewWithGemini({ chapterText, chapterTitle, apiKey: geminiApiKey, model: geminiModel });
-    } catch (err) {
-      console.warn('Gemini review failed, using local bestseller engine:', err);
-    }
+    const result = await reviewWithGemini({ chapterText, chapterTitle, bookContext, apiKey: geminiApiKey, model: geminiModel });
+    return { ...result, source: 'ai' };
   } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
+    const endpoint = aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint;
+    const model = aiProvider === 'ollama' ? ollamaModel : openaiModel;
+    const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
+    const result = await reviewWithOpenAICompatible({ chapterText, chapterTitle, bookContext, endpoint, model, apiKey: key });
+    return { ...result, source: 'ai' };
+  }
+
+  if (strict) {
+    throw new Error('Configura e verifica un provider AI nelle Impostazioni prima di analizzare il libro.');
+  }
+
+  return { ...runLocalHeuristicChapterReview(chapterText, chapterTitle), source: 'local' };
+}
+
+export function buildNovelContext(book, targetChapterId = null) {
+  if (!book) return '';
+  const bible = book.bible || {};
+  const chapters = [...(book.chapters || [])].sort((first, second) => (first.order || 0) - (second.order || 0));
+  const targetIndex = chapters.findIndex(chapter => chapter.id === targetChapterId);
+  const relevantChapters = targetIndex >= 0
+    ? chapters.slice(Math.max(0, targetIndex - 1), Math.min(chapters.length, targetIndex + 2))
+    : chapters.slice(0, 3);
+  const characters = (bible.characters || []).slice(0, 8)
+    .map(character => `${character.name || 'Personaggio'}: ${character.role || ''}. ${character.goal || ''}`.slice(0, 180))
+    .join('\n');
+  const plotNotes = (bible.plotNotes || []).slice(0, 6)
+    .map(note => `${note.title || 'Trama'}: ${note.summary || ''}`.slice(0, 180))
+    .join('\n');
+  const chapterMap = relevantChapters
+    .map(chapter => `${chapter.title || 'Capitolo'}: ${(chapter.synopsis || 'Sinossi non disponibile.').slice(0, 180)}`)
+    .join('\n');
+  return [
+    `Titolo: ${(book.title || 'Senza titolo').slice(0, 120)}`,
+    `Genere: ${(book.genre || 'Non specificato').slice(0, 100)}`,
+    `Sinossi: ${(book.synopsis || bible.synopsis || 'Non disponibile.').slice(0, 700)}`,
+    `Personaggi e obiettivi:\n${characters || 'Non definiti.'}`,
+    `Arco e appunti di trama:\n${plotNotes || 'Non disponibili.'}`,
+    `Ambientazione: ${(bible.worldNotes || 'Non definita.').slice(0, 400)}`,
+    `Ordine e sinossi dei capitoli:\n${chapterMap}`
+  ].join('\n\n').slice(0, 3200);
+}
+
+export async function reviewWholeBook({ book, settings, onProgress = () => {} }) {
+  const chapters = [...(book?.chapters || [])]
+    .filter(chapter => (chapter.content || '').trim().length >= 25)
+    .sort((first, second) => (first.order || 0) - (second.order || 0));
+  if (chapters.length === 0) throw new Error('Il libro non contiene ancora capitoli sufficienti da analizzare.');
+
+  const hasProvider = (settings.aiProvider === 'gemini' && settings.geminiApiKey)
+    || (settings.aiProvider === 'openai' && settings.openaiApiKey)
+    || settings.aiProvider === 'ollama';
+  if (!hasProvider) throw new Error('Configura e verifica un provider AI nelle Impostazioni prima di analizzare il libro.');
+
+  const cacheKey = `bookify_ai_review_cache_v1_${book.id}`;
+  let reviewCache = {};
+  try {
+    reviewCache = JSON.parse(localStorage.getItem(cacheKey) || '{}');
+  } catch {}
+  const results = [];
+  for (let index = 0; index < chapters.length; index += 1) {
+    const chapter = chapters[index];
+    onProgress({ current: index + 1, total: chapters.length, title: chapter.title || `Capitolo ${index + 1}` });
+    const bookContext = buildNovelContext(book, chapter.id);
+    const fingerprint = hashReviewInput(JSON.stringify({
+      version: 1,
+      content: chapter.content,
+      bookContext,
+      provider: settings.aiProvider,
+      model: settings.aiProvider === 'gemini' ? settings.geminiModel : settings.aiProvider === 'ollama' ? settings.ollamaModel : settings.openaiModel,
+      endpoint: settings.aiProvider === 'ollama' ? settings.ollamaEndpoint : settings.openaiEndpoint
+    }));
+    const cached = reviewCache[chapter.id];
+    if (cached?.fingerprint === fingerprint && cached.report) {
+      results.push({ chapterId: chapter.id, title: chapter.title, report: cached.report, cached: true });
+      onProgress({ current: index + 1, total: chapters.length, title: chapter.title || `Capitolo ${index + 1}`, cached: true });
+      continue;
+    }
+
     try {
-      const endpoint = aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint;
-      const model = aiProvider === 'ollama' ? ollamaModel : openaiModel;
-      const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      return await reviewWithOpenAICompatible({ chapterText, chapterTitle, endpoint, model, apiKey: key });
-    } catch (err) {
-      console.warn('OpenAI/Ollama review failed, using local bestseller engine:', err);
+      const report = await reviewChapterContent({
+        chapterText: chapter.content,
+        chapterTitle: chapter.title,
+        settings,
+        bookContext,
+        strict: true
+      });
+      results.push({ chapterId: chapter.id, title: chapter.title, report, cached: false });
+      reviewCache[chapter.id] = { fingerprint, report };
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(reviewCache));
+      } catch (error) {
+        console.warn('Unable to cache AI book review:', error);
+      }
+    } catch (error) {
+      const message = error.message || 'Analisi non riuscita.';
+      results.push({ chapterId: chapter.id, title: chapter.title, error: message });
+      if (message.includes('HTTP 429')) {
+        chapters.slice(index + 1).forEach(remainingChapter => {
+          results.push({
+            chapterId: remainingChapter.id,
+            title: remainingChapter.title,
+            error: 'Analisi sospesa perché il provider ha raggiunto il limite di richieste. Riprova più tardi.'
+          });
+        });
+        break;
+      }
     }
   }
 
-  return runLocalHeuristicChapterReview(chapterText, chapterTitle);
+  return { bookTitle: book.title, chapters: results };
+}
+
+function hashReviewInput(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 /**
@@ -129,24 +437,24 @@ Rispondi SOLO in formato JSON:
     if (aiProvider === 'gemini' && geminiApiKey) {
       const modelName = geminiModel || 'gemini-1.5-flash';
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTransientRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.6 }
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 1000 }
         })
       });
       if (res.ok) {
         const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const raw = getGeminiText(data);
         const parsed = parseJsonSafe(raw, null);
         if (parsed) return parsed;
       }
     } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
       const endpoint = (aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint).replace(/\/+$/, '');
       const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      const res = await fetch(`${endpoint}/chat/completions`, {
+      const res = await fetchWithTransientRetry(`${endpoint}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -155,7 +463,8 @@ Rispondi SOLO in formato JSON:
         body: JSON.stringify({
           model: (aiProvider === 'ollama' ? ollamaModel : openaiModel) || 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.6
+          temperature: 0.6,
+          max_tokens: 1000
         })
       });
       if (res.ok) {
@@ -194,11 +503,43 @@ Rispondi SOLO in formato JSON:
  * Takes a selected paragraph and rewrites it in specific bestselling styles:
  * 'pacingBoost' | 'showDontTell' | 'dialogueSharp' | 'sensoryRich'
  */
-export async function enhanceParagraph({ text, mode, settings }) {
+export async function enhanceParagraph({ text, mode, settings, bookContext = '', signal }) {
   if (!text || text.trim().length < 10) return text;
 
+  const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
+  const canUseGemini = aiProvider === 'gemini' && geminiApiKey;
+  const canUseCompatible = (aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama';
+  const isOllamaRefinement = mode === 'refinement' && aiProvider === 'ollama';
+  if (mode === 'refinement' && !canUseGemini && !canUseCompatible) {
+    throw new Error('Configura un provider AI nelle Impostazioni per usare la Rifinitura.');
+  }
+
   let modeInstruction = '';
-  if (mode === 'pacingBoost') {
+  if (mode === 'refinement') {
+    modeInstruction = `Esegui un line editing profondo da editor letterario e romanziere di altissimo livello. Trasforma la bozza grezza in prosa immersiva, viscerale e magnetica, non limitarti a correggere i refusi.
+
+RITMO E STRUTTURA:
+- Alterna frasi brevi e incisive a periodi più ampi. Spezza gli accumuli monotoni di coordinate e subordinate, mantenendo chiara la sequenza delle azioni.
+- Varia l'attacco dei periodi: evita di iniziare frasi consecutive con lo stesso soggetto o pronome.
+- RISTRUTTURAZIONE ATTIVA OBBLIGATORIA: non limitarti a correggere la grammatica lasciando invariata la struttura. Riscrivi attivamente i periodi con ritmo monotono del tipo "Io ho fatto X, poi ho visto Y"; varia gli attacchi ed evita sequenze di frasi che iniziano con "Mi...", "Presi...", "Vidi..." o forme equivalenti.
+- Elimina ripetizioni immediate della stessa azione e ridondanze, senza cancellare eventi distinti o informazioni narrative.
+- Sciogli ed elimina ripetizioni ravvicinate della stessa radice o dello stesso verbo (per esempio "continuavano/continuava"), mantenendo tutte le azioni e le informazioni.
+- Organizza il testo in paragrafi separati da righe vuote secondo i beat della scena: azione, scoperta, reazione, cambio di luogo o momento di tensione. Non restituire un blocco unico.
+
+LESSICO E SENSORIALITÀ:
+- Sostituisci verbi generici o deboli come "vidi", "notai", "c'era" o "pareva" con formulazioni più precise e dinamiche quando il contesto lo consente.
+- Rendi concrete e vivide le sensazioni fisiche ed emotive già suggerite dalla scena, senza accumulare aggettivi o introdurre nuove informazioni fattuali.
+- Scrivi in italiano naturale e impeccabile. Non inserire parole o frasi in altre lingue, tranne quando sono già presenti nell'originale come testo diegetico.
+
+PRESERVAZIONE ASSOLUTA:
+- Non riassumere e non tagliare scene, azioni, descrizioni, indizi, passaggi logici o world-building. Puoi riformulare e riordinare, ma conserva ogni informazione ed evento distinto.
+- Mantieni identici nomi propri, date, quantità, valute, prezzi, oggetti, elenchi e meccaniche di gioco. Non normalizzare le stranezze intenzionali.
+- Conserva letteralmente testi UI, menu, schermate, messaggi, scritte spezzate o volutamente errate, compresi "Witdraw/Versamento" e "inserire impornta digitale per contin…". Non correggerli e non tradurli.
+- Mantieni rigorosamente punto di vista, persona narrante, genere grammaticale e tempi verbali dell'autrice. Non aggiungere pensieri, spiegazioni morali o fatti assenti.
+- Se un dettaglio potrebbe essere intenzionale, conservalo.
+
+Restituisci tutto il testo revisionato dall'inizio fino all'ultima frase fornita dall'autrice, pronto per essere inserito. Non interromperti a metà della scena, non troncare la conclusione e non omettere la parte finale. Non riassumere.`;
+  } else if (mode === 'pacingBoost') {
     modeInstruction = 'Aumenta il ritmo e la suspense: accorcia le frasi, elimina le subordinate farraginose, aumenta la tensione drammatica e il senso di urgenza.';
   } else if (mode === 'showDontTell') {
     modeInstruction = 'Applica rigorosamente il principio "Show, Don\'t Tell" (Mostra, non raccontare): elimina i verbi filtro (vide che, sentì che, sembrava, provò) e sostituiscili con reazioni fisiche, sensoriali e dettagli ambientali concreti.';
@@ -208,7 +549,37 @@ export async function enhanceParagraph({ text, mode, settings }) {
     modeInstruction = 'Arricchisci la carica sensoriale (suoni, ombre, odori, freddo/caldo) mantenendo la voce dell\'autore sobria ed elegante.';
   }
 
-  const prompt = `Sei un editor letterario professionista specializzato in bestseller di narrativa.
+  const prompt = isOllamaRefinement
+    ? `RUOLO: Senior Book Editor specializzato in narrativa speculativa e weird fiction.
+COMPITO: Riscrivi integralmente il testo dell'autrice elevandolo a prosa fluida, evocativa e coesa.
+
+REGOLE TASSATIVE:
+- Non inventare e non riassumere. Conserva ogni fatto e passaggio della scena, tutti i nomi propri, numeri, oggetti, dettagli di trama e world-building.
+- Mantieni letteralmente i testi a schermo, le scritte spezzate o volutamente errate, il listino del totem e la valuta ibrida. Non correggerli, completarli o tradurli.
+- Correggi grammatica, ortografia e concordanze. Mantieni i tempi verbali coerenti con la narrazione; quando è al passato, coniuga correttamente anche il passato remoto (per esempio "caddi", "bevvi", "raccolsi") e concorda generi e numeri (per esempio "i pesci", "gli scaffali").
+- Varia gli attacchi di frase, elimina ripetizioni ravvicinate e migliora il ritmo senza cancellare azioni o dettagli. Mantieni il punto di vista e la persona narrante.
+- Dividi la scena in paragrafi nei cambi di azione, scoperta o luogo.
+- Scrivi esclusivamente in italiano, salvo le stringhe diegetiche già presenti nell'originale.
+
+TESTO ORIGINALE COMPLETO:
+${JSON.stringify(text)}
+
+OUTPUT: restituisci soltanto la scena revisionata, dall'inizio alla fine del testo ricevuto. Non aggiungere note, spiegazioni, markdown, JSON, nomi di modelli, messaggi di debug o testo estraneo alla scena.`
+    : mode === 'refinement'
+    ? `RUOLO: Sei un editor letterario esperto e ghostwriter professionista, specializzato in narrativa d'atmosfera, immersiva e sci-fi/weird.
+OBIETTIVO: Migliora stile e grammatica del testo fornito, rendendolo fluido ed efficace senza riassumere né cancellare elementi della trama o del world-building.
+
+REGOLE:
+${modeInstruction}
+
+CONTESTO DEL ROMANZO:
+${JSON.stringify(bookContext || 'Non disponibile.')}
+
+TESTO ORIGINALE (stringa JSON da revisionare integralmente):
+${JSON.stringify(text)}
+
+Rispondi esclusivamente con JSON valido in questa forma: {"improved":"testo integrale revisionato dall'inizio alla fine, con paragrafi separati da righe vuote","explanation":"nota editoriale di una o due frasi"}. La nota deve essere breve e non va inclusa nel testo revisionato. Prima di rispondere, verifica che la revisione arrivi all'ultima frase dell'originale e che tutti i fatti, i nomi, i numeri, le stringhe UI e le azioni siano ancora presenti.`
+    : `Sei un editor letterario professionista specializzato in narrativa.
 Riscrivi il seguente estratto applicando questo criterio:
 ${modeInstruction}
 
@@ -221,51 +592,72 @@ Restituisci ESCLUSIVAMENTE un JSON:
   "explanation": "2 frasi sintetiche su quali modifiche sono state apportate e perché elevano la narrazione."
 }`;
 
-  const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
-
   try {
-    if (aiProvider === 'gemini' && geminiApiKey) {
+    if (canUseGemini) {
       const modelName = geminiModel || 'gemini-1.5-flash';
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTransientRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal,
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.4 }
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: mode === 'refinement' ? 0.2 : 0.4,
+            ...(mode !== 'refinement' ? { maxOutputTokens: 850 } : {})
+          }
         })
-      });
+      }, mode === 'refinement' ? 5 : 3);
+      if (!res.ok && mode === 'refinement') throw new Error(await getServiceErrorMessage(res, 'Gemini'));
       if (res.ok) {
         const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const raw = getGeminiText(data);
         const parsed = parseJsonSafe(raw, null);
         if (parsed?.improved) return parsed;
+        if (mode === 'refinement') throw new Error(getGeminiOutputError(data, 'la rifinitura'));
       }
-    } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
+    } else if (canUseCompatible) {
       const endpoint = (aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint).replace(/\/+$/, '');
       const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      const res = await fetch(`${endpoint}/chat/completions`, {
+      const res = await fetchWithTransientRetry(`${endpoint}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(key !== 'ollama' ? { 'Authorization': `Bearer ${key}` } : {})
         },
+        signal,
         body: JSON.stringify({
           model: (aiProvider === 'ollama' ? ollamaModel : openaiModel) || 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.4
+          temperature: mode === 'refinement' ? 0.2 : 0.4,
+          ...(isOllamaRefinement ? { think: false } : {}),
+          ...(mode !== 'refinement' ? { max_tokens: 850 } : {})
         })
       });
+      if (!res.ok && mode === 'refinement') throw new Error(await getServiceErrorMessage(res, aiProvider));
       if (res.ok) {
         const data = await res.json();
         const content = data.choices?.[0]?.message?.content;
+        if (isOllamaRefinement) {
+          const cleanedText = (content || '').replace(/^```(?:text|markdown)?\s*|\s*```$/gi, '').trim();
+          if (!cleanedText) throw new Error('Ollama non ha restituito testo per la Rifinitura.');
+          return { improved: cleanedText, explanation: '' };
+        }
         const parsed = parseJsonSafe(extractJsonFromMarkdown(content), null);
         if (parsed?.improved) return parsed;
+        if (mode === 'refinement') throw new Error('La risposta AI della Rifinitura non contiene testo valido.');
       }
     }
   } catch (err) {
+    if (mode === 'refinement') {
+      if (err.name !== 'AbortError') console.warn('Chapter refinement API error', err);
+      throw err;
+    }
     console.warn('Enhance paragraph API error, using heuristic polish', err);
   }
+
+  if (mode === 'refinement') throw new Error('La Rifinitura non ha prodotto una risposta valida. Riprova.');
 
   // Fallback heuristic rewrite
   return {
@@ -329,17 +721,17 @@ Rispondi ESCLUSIVAMENTE in formato JSON con questo schema:
     if (aiProvider === 'gemini' && geminiApiKey) {
       const modelName = geminiModel || 'gemini-1.5-flash';
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTransientRetry(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { responseMimeType: 'application/json', temperature: 0.6 }
+          generationConfig: { responseMimeType: 'application/json', temperature: 0.6, maxOutputTokens: 1300 }
         })
       });
       if (res.ok) {
         const data = await res.json();
-        const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        const raw = getGeminiText(data);
         const parsed = parseJsonSafe(raw, null);
         if (parsed?.titles?.length) {
           return { success: true, ...parsed, wordsCount: words.length };
@@ -348,7 +740,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON con questo schema:
     } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
       const endpoint = (aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint).replace(/\/+$/, '');
       const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      const res = await fetch(`${endpoint}/chat/completions`, {
+      const res = await fetchWithTransientRetry(`${endpoint}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -357,7 +749,8 @@ Rispondi ESCLUSIVAMENTE in formato JSON con questo schema:
         body: JSON.stringify({
           model: (aiProvider === 'ollama' ? ollamaModel : openaiModel) || 'gpt-4o-mini',
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.6
+          temperature: 0.6,
+          max_tokens: 1300
         })
       });
       if (res.ok) {
@@ -471,12 +864,12 @@ async function checkChunkWithGemini({ recentText, contextWindow, apiKey, model }
   const modelName = model || 'gemini-1.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `Sei l'assistente editoriale discreto di uno scrittore di narrativa e romanzi d'intrattenimento di alta qualità (thriller, mystery, narrativa).
-Analizza il seguente testo recente nel suo contesto narrativo.
-Segnala solo:
+  const prompt = `Sei un assistente editoriale discreto per narrativa. Analizza il testo nel suo contesto e rispetta genere, voce, punto di vista e intenzione dell'autrice. Non imporre convenzioni da thriller o regole stilistiche universali.
+Segnala solo problemi concreti e verificabili:
 1. Refusi o errori grammaticali in italiano (accenti, concordanze).
-2. Verbi filtro deboli ("Mostra, non raccontare" - es. "sentì che", "vide che").
-3. Frasi involontariamente ripetitive o salti temporali incongruenti.
+2. Ambiguita' involontarie che rendono poco chiaro chi agisce o a cosa si riferisce una frase.
+3. Ripetizioni involontarie o salti temporali incongruenti.
+Non segnalare preferenze personali, frasi lunghe solo perche' lunghe, ne' verbi filtro senza un problema concreto. Se non trovi un problema chiaro, restituisci []. Le citazioni devono essere porzioni esatte del testo.
 
 CONTESTO RECENTE:
 """${contextWindow.slice(-1800)}"""
@@ -495,49 +888,55 @@ Rispondi ESCLUSIVAMENTE in formato JSON aderente a questo schema:
 ]
 Se il testo è ottimo e fluido, restituisci []`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTransientRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.2 }
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.2, maxOutputTokens: 450 }
     })
   });
 
-  if (!res.ok) throw new Error(`Gemini API error ${res.status}`);
+  if (!res.ok) throw new Error(getTemporaryServiceError('Gemini', res.status));
   const data = await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  const rawText = getGeminiText(data);
   return parseJsonSafe(rawText, []);
 }
 
-async function reviewWithGemini({ chapterText, chapterTitle, apiKey, model }) {
+async function reviewWithGemini({ chapterText, chapterTitle, bookContext, apiKey, model }) {
   const modelName = model || 'gemini-1.5-flash';
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
-  const prompt = `Sei un Senior Literary Editor specializzato in bestseller di narrativa, thriller e narrativa di genere ad alto ritmo.
-Esegui la revisione editoriale approfondita del capitolo "${chapterTitle}".
+  const prompt = `Sei un editor letterario attento all'intenzione dell'autrice. Analizza il capitolo "${chapterTitle}" rispettandone genere, voce e punto di vista. Non imporre convenzioni da thriller, limiti fissi alla lunghezza delle frasi o preferenze stilistiche come fossero regole.
+Segnala i problemi concreti che il testo supporta. Cita passaggi esatti e non inventare dettagli mancanti. Per ogni proposta di riscrittura, conserva significato e intenzione; se non c'e' un problema chiaro, non forzare una correzione.
+
+CONTESTO DELL'INTERO ROMANZO:
+"""${bookContext || 'Non disponibile.'}"""
 
 TESTO DEL CAPITOLO:
 """${chapterText}"""
 
-Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
+Ometti le categorie senza rilievi. Rispondi esclusivamente con un oggetto JSON valido, senza commenti, markdown o testo prima/dopo. Usa solo stringhe, numeri, oggetti e array JSON; non scrivere alternative con il carattere |.
 {
-  "pacingScore": 85, // punteggio da 1 a 100 sulla tensione e tenuta della lettura
+  "pacingScore": 85,
   "pacingReview": {
-    "tensionLevel": "Alta" | "Media" | "Bassa" | "Calante",
+    "tensionLevel": "Media",
     "pacingCritique": "Analisi del ritmo: dove il capitolo accelera e dove rischia di perdere il lettore.",
     "cliffhangerSuggestions": [
       { "type": "Rivelazione", "suggestion": "Idea concreta per chiudere con un colpo di scena", "reason": "Perché funziona" }
     ]
   },
   "showDontTell": [
-    { "quote": "passaggio con verbo filtro o astrazione", "critique": "perché è un 'tell' debole", "replacement": "come renderlo sensoriale ed evocativo" }
+    { "quote": "citazione esatta solo se il verbo filtro indebolisce davvero questa scena", "critique": "effetto concreto su chiarezza o coinvolgimento", "replacement": "alternativa facoltativa che conserva voce e fatti" }
+  ],
+  "craft": [
+    { "quote": "citazione esatta", "category": "Scena | Personaggio | Dialogo | Punto di vista | Esposizione | Continuita", "critique": "problema narrativo concreto nel contesto", "suggestion": "intervento pratico e conservativo" }
   ],
   "orthography": [
     { "original": "refuso o errore", "fix": "correzione", "explanation": "regola o motivazione" }
   ],
   "rhythm": [
-    { "quote": "frase appesantita o prolissa", "critique": "perché frena la lettura", "suggestion": "versione più asciutta e ritmata" }
+    { "quote": "citazione esatta solo se crea un problema reale di ritmo o chiarezza", "critique": "effetto concreto nel contesto, non la sola lunghezza", "suggestion": "alternativa che mantiene intenzione e voce" }
   ],
   "temporalCoherence": [
     { "passage": "salto temporale", "detectedTense": "tempo trovato", "expectedTense": "tempo coerente", "note": "spiegazione" }
@@ -547,7 +946,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
   ]
 }`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTransientRetry(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -556,9 +955,9 @@ Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
     })
   });
 
-  if (!res.ok) throw new Error(`Gemini review error ${res.status}`);
+  if (!res.ok) throw new Error(getTemporaryServiceError('Gemini', res.status));
   const data = await res.json();
-  const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+  const rawText = getGeminiText(data);
   const parsed = parseJsonSafe(rawText, null);
   
   if (parsed) {
@@ -575,7 +974,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
     };
   }
 
-  return runLocalHeuristicChapterReview(chapterText, chapterTitle);
+  throw new Error(getGeminiOutputError(data, `il capitolo "${chapterTitle}"`));
 }
 
 /* ====================================================================
@@ -590,9 +989,8 @@ async function checkChunkWithOpenAICompatible({ recentText, contextWindow, endpo
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const prompt = `Sei un assistente editoriale per scrittori di romanzi.
-Analizza il seguente testo recente (stile thriller/narrativa avvincente).
-Segnala refusi, frasi deboli con verbi filtro (Mostra, non raccontare) o salti temporali.
+  const prompt = `Sei un assistente editoriale discreto per narrativa. Rispetta genere, voce, punto di vista e intenzione dell'autrice; non imporre convenzioni da thriller o regole stilistiche universali.
+Segnala solo refusi, errori grammaticali, ambiguita' involontarie o salti temporali incongruenti. Non segnalare preferenze personali, frasi lunghe solo perche' lunghe, ne' verbi filtro senza un problema concreto. Se non trovi un problema chiaro, restituisci []. Le citazioni devono essere porzioni esatte del testo.
 Rispondi SOLO in formato JSON:
 [
   {
@@ -610,23 +1008,24 @@ ${contextWindow.slice(-1500)}
 TESTO RECENTE:
 ${recentText}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTransientRetry(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       model: model || 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2
+      temperature: 0.2,
+      max_tokens: 450
     })
   });
 
-  if (!res.ok) throw new Error(`OpenAI/Ollama error ${res.status}`);
+  if (!res.ok) throw new Error(getTemporaryServiceError('OpenAI/Ollama', res.status));
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   return parseJsonSafe(extractJsonFromMarkdown(content), []);
 }
 
-async function reviewWithOpenAICompatible({ chapterText, chapterTitle, endpoint, model, apiKey }) {
+async function reviewWithOpenAICompatible({ chapterText, chapterTitle, bookContext, endpoint, model, apiKey }) {
   const cleanEndpoint = endpoint.replace(/\/+$/, '');
   const url = `${cleanEndpoint}/chat/completions`;
 
@@ -635,8 +1034,11 @@ async function reviewWithOpenAICompatible({ chapterText, chapterTitle, endpoint,
     headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  const prompt = `Sei un Senior Editor di romanzi bestseller e narrativa ad alto coinvolgimento narrativo.
-Revisiona il capitolo intitolato "${chapterTitle}".
+  const prompt = `Sei un editor letterario attento all'intenzione dell'autrice. Analizza il capitolo "${chapterTitle}" rispettandone genere, voce e punto di vista. Non imporre convenzioni da thriller, limiti fissi alla lunghezza delle frasi o preferenze stilistiche come fossero regole.
+Segnala i problemi concreti supportati dal testo; cita passaggi esatti e non inventare dettagli. Non forzare una proposta di riscrittura se la frase funziona nel contesto.
+
+CONTESTO DELL'INTERO ROMANZO:
+"""${bookContext || 'Non disponibile.'}"""
 Rispondi ESCLUSIVAMENTE in JSON:
 {
   "pacingScore": 82,
@@ -648,10 +1050,11 @@ Rispondi ESCLUSIVAMENTE in JSON:
     ]
   },
   "showDontTell": [
-    { "quote": "frase con verbo filtro", "critique": "motivo", "replacement": "riscrittura sensoriale" }
+    { "quote": "citazione esatta solo se il verbo filtro indebolisce davvero questa scena", "critique": "effetto concreto su chiarezza o coinvolgimento", "replacement": "alternativa facoltativa che conserva voce e fatti" }
   ],
+  "craft": [ { "quote": "citazione esatta", "category": "Scena | Personaggio | Dialogo | Punto di vista | Esposizione | Continuita", "critique": "problema narrativo concreto nel contesto", "suggestion": "intervento pratico e conservativo" } ],
   "orthography": [ { "original": "...", "fix": "...", "explanation": "..." } ],
-  "rhythm": [ { "quote": "...", "critique": "...", "suggestion": "..." } ],
+  "rhythm": [ { "quote": "citazione esatta", "critique": "effetto concreto nel contesto, non la sola lunghezza", "suggestion": "alternativa che mantiene intenzione e voce" } ],
   "temporalCoherence": [ { "passage": "...", "detectedTense": "...", "expectedTense": "...", "note": "..." } ],
   "stylisticNotes": [ { "title": "...", "note": "..." } ]
 }
@@ -659,17 +1062,17 @@ Rispondi ESCLUSIVAMENTE in JSON:
 TESTO:
 ${chapterText}`;
 
-  const res = await fetch(url, {
+  const res = await fetchWithTransientRetry(url, {
     method: 'POST',
     headers,
     body: JSON.stringify({
       model: model || 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3
+      temperature: 0.3,
     })
   });
 
-  if (!res.ok) throw new Error(`OpenAI/Ollama error ${res.status}`);
+  if (!res.ok) throw new Error(getTemporaryServiceError('OpenAI/Ollama', res.status));
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
   const parsed = parseJsonSafe(extractJsonFromMarkdown(content), null);
@@ -688,7 +1091,7 @@ ${chapterText}`;
     };
   }
 
-  return runLocalHeuristicChapterReview(chapterText, chapterTitle);
+  throw new Error('Il provider AI ha risposto, ma il report del capitolo non contiene JSON valido. Riprova l’analisi.');
 }
 
 /* ====================================================================
@@ -791,13 +1194,6 @@ function runLocalHeuristicChapterReview(chapterText, chapterTitle) {
     const sWords = s.trim().split(/\s+/).filter(Boolean);
     if (sWords.length > 36) {
       longSentenceCount++;
-      if (rhythm.length < 4) {
-        rhythm.push({
-          quote: s.trim().slice(0, 95) + '...',
-          critique: `Frase di ben ${sWords.length} parole. Nei momenti di tensione narrativa o thriller, si raccomandano periodi di massimo 12-18 parole.`,
-          suggestion: 'Spezza il periodo con uno o due punti fermi per creare un ritmo staccato e incalzante.'
-        });
-      }
     }
   });
 

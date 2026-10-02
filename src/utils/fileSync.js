@@ -1,13 +1,21 @@
 // Real Local File Sync & Native Desktop Storage Engine for Bookify
 // Native File System Access API with IndexedDB handle persistence,
 // ensuring the user edits the SAME file on PC in-place without generating duplicates.
+import { invoke } from '@tauri-apps/api/core';
 
 const DB_NAME = 'bookify_fs_db';
 const STORE_NAME = 'handles';
 const KEY_ACTIVE_HANDLE = 'active_book_file_handle';
+const KEY_TAURI_FILE_PATH = 'bookify_tauri_file_path';
+const KEY_TAURI_FILE_NAME = 'bookify_tauri_file_name';
 
 let activeFileHandle = null;
-let activeFileName = '';
+let activeFileName = typeof localStorage !== 'undefined' ? localStorage.getItem(KEY_TAURI_FILE_NAME) || '' : '';
+let activeTauriFilePath = typeof localStorage !== 'undefined' ? localStorage.getItem(KEY_TAURI_FILE_PATH) || '' : '';
+
+function isTauriRuntime() {
+  return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window || Boolean(window.__TAURI_INTERNALS__));
+}
 
 // Initialize IndexedDB database for persisting FileSystemFileHandle across reloads
 function openDB() {
@@ -84,6 +92,20 @@ export async function saveProjectToDiskFile(bookData, preferredName = '') {
   const defaultName = preferredName || `${(bookData.title || 'Mio_Romanzo').replace(/[^a-zA-Z0-9_\u00C0-\u017F-]/g, '_')}.bookify`;
   const fileContent = JSON.stringify(bookData, null, 2);
 
+  if (isTauriRuntime()) {
+    const savedFile = await invoke('save_bookify_file', {
+      contents: fileContent,
+      defaultName,
+      path: activeTauriFilePath || null
+    });
+    if (!savedFile) return { success: false, cancelled: true };
+    activeTauriFilePath = savedFile.path;
+    activeFileName = savedFile.fileName;
+    localStorage.setItem(KEY_TAURI_FILE_PATH, activeTauriFilePath);
+    localStorage.setItem(KEY_TAURI_FILE_NAME, activeFileName);
+    return { success: true, fileName: activeFileName, isDirectDisk: true };
+  }
+
   // 1. If we already have an active connected file handle on the PC, write directly to it!
   if (!activeFileHandle) {
     activeFileHandle = await getPersistedHandleFromIDB();
@@ -155,6 +177,16 @@ export async function saveProjectToDiskFile(bookData, preferredName = '') {
  * Open a .bookify or .json project file from PC disk and connect it for direct in-place editing!
  */
 export async function openProjectFromDiskFile() {
+  if (isTauriRuntime()) {
+    const openedFile = await invoke('open_bookify_file');
+    if (!openedFile) return { success: false, cancelled: true };
+    activeTauriFilePath = openedFile.path;
+    activeFileName = openedFile.fileName;
+    localStorage.setItem(KEY_TAURI_FILE_PATH, activeTauriFilePath);
+    localStorage.setItem(KEY_TAURI_FILE_NAME, activeFileName);
+    return { success: true, data: JSON.parse(openedFile.contents), fileName: activeFileName };
+  }
+
   if (supportsFileSystemAccess()) {
     try {
       const [handle] = await window.showOpenFilePicker({
@@ -207,6 +239,21 @@ export async function openProjectFromDiskFile() {
  * In-place modification only; never triggers downloads!
  */
 export async function autosaveToConnectedDisk(bookData) {
+  if (isTauriRuntime()) {
+    if (!activeTauriFilePath) return false;
+    try {
+      await invoke('save_bookify_file', {
+        contents: JSON.stringify(bookData, null, 2),
+        defaultName: activeFileName || 'Mio_Romanzo.bookify',
+        path: activeTauriFilePath
+      });
+      return true;
+    } catch (err) {
+      console.warn('Autosave to disk failed:', err);
+      return false;
+    }
+  }
+
   if (!activeFileHandle) {
     activeFileHandle = await getPersistedHandleFromIDB();
   }
@@ -232,6 +279,9 @@ export async function autosaveToConnectedDisk(bookData) {
 export async function disconnectFileHandle() {
   activeFileHandle = null;
   activeFileName = '';
+  activeTauriFilePath = '';
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY_TAURI_FILE_PATH);
+  if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY_TAURI_FILE_NAME);
   try {
     const db = await openDB();
     if (db) {

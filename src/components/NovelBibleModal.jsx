@@ -17,9 +17,13 @@ export default function NovelBibleModal({
   isOpen,
   onClose,
   book,
+  settings,
   onUpdateBible
 }) {
-  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, 280);
+  const animDuration = settings?.enableAnimations !== false
+    ? Number(settings?.animationDurationMs) || 280
+    : 0;
+  const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, animDuration);
   const [activeTab, setActiveTab] = useState('characters'); // 'characters' | 'plot' | 'world' | 'synopsis'
   const bible = book?.bible || { synopsis: '', characters: [], plotNotes: [], worldNotes: '' };
 

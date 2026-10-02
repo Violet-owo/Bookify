@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   X, 
   Sliders, 
@@ -20,6 +20,7 @@ import {
   Layers
 } from 'lucide-react';
 import { audioEngine, KEY_PROFILES, AMBIENT_TRACKS } from '../utils/audioEngine';
+import { fetchAIWithUsage, readAIUsage } from '../utils/aiService';
 import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
 
 export default function SettingsModal({
@@ -36,7 +37,19 @@ export default function SettingsModal({
   const [activeTab, setActiveTab] = useState('theme'); // 'theme' | 'canvas' | 'motion' | 'save' | 'audio' | 'ai'
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTestingKey, setIsTestingKey] = useState(false);
+  const [testingCompatibleProvider, setTestingCompatibleProvider] = useState(null);
   const [keyTestStatus, setKeyTestStatus] = useState(null);
+  const [availableGeminiModels, setAvailableGeminiModels] = useState([]);
+  const [availableOpenAIModels, setAvailableOpenAIModels] = useState([]);
+  const [availableOllamaModels, setAvailableOllamaModels] = useState([]);
+  const [compatibleTestStatus, setCompatibleTestStatus] = useState({ openai: null, ollama: null });
+  const [aiUsage, setAiUsage] = useState(() => readAIUsage());
+
+  useEffect(() => {
+    const updateUsage = () => setAiUsage(readAIUsage());
+    window.addEventListener('bookify-ai-usage-updated', updateUsage);
+    return () => window.removeEventListener('bookify-ai-usage-updated', updateUsage);
+  }, []);
 
   const handleTestGeminiKey = async () => {
     const key = (settings.geminiApiKey || localStorage.getItem('bookify_gemini_api_key') || '').trim();
@@ -47,56 +60,136 @@ export default function SettingsModal({
     setIsTestingKey(true);
     setKeyTestStatus(null);
     try {
-      const requestedModel = settings.geminiModel || 'gemini-2.0-flash';
-      const modelsToTry = Array.from(new Set([
-        requestedModel,
-        'gemini-2.0-flash',
-        'gemini-1.5-flash',
-        'gemini-1.5-pro'
-      ]));
-
-      let res = null;
-      let workingModel = requestedModel;
-
-      for (const m of modelsToTry) {
-        workingModel = m;
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${key}`;
-        res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Rispondi con una sola parola: CONNESSO' }] }]
-          })
-        });
-        if (res.ok) break;
+      const listResponse = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+      const listData = await listResponse.json().catch(() => ({}));
+      if (!listResponse.ok) {
+        throw new Error(listData.error?.message || `Google non ha accettato la chiave (HTTP ${listResponse.status}).`);
       }
 
-      if (res && res.ok) {
-        localStorage.setItem('bookify_gemini_api_key', key);
-        if (workingModel !== settings.geminiModel) {
-          onUpdateSettings({ ...settings, geminiApiKey: key, geminiModel: workingModel });
-        } else {
-          onUpdateSettings({ ...settings, geminiApiKey: key });
-        }
-        setKeyTestStatus({
-          success: true,
-          message: `✓ Connessione riuscita a Google Gemini (${workingModel})! Chiave verificata e memorizzata.`
-        });
-      } else {
-        const data = await res?.json().catch(() => ({})) || {};
-        const errMsg = data.error?.message || (res ? `Errore HTTP ${res.status}` : 'Nessuna risposta dal server');
-        setKeyTestStatus({
-          success: false,
-          message: `✕ Chiave non valida o permessi API non attivi: ${errMsg}`
-        });
+      const models = (listData.models || [])
+        .filter(model => model.name?.startsWith('models/gemini-') && model.supportedGenerationMethods?.includes('generateContent'))
+        .map(model => ({
+          id: model.name.replace(/^models\//, ''),
+          label: model.displayName || model.name.replace(/^models\//, '')
+        }))
+        .sort((first, second) => Number(!/flash/i.test(first.id)) - Number(!/flash/i.test(second.id)));
+
+      if (models.length === 0) {
+        throw new Error('La chiave funziona, ma Google non ha restituito modelli Gemini compatibili con generateContent.');
       }
+
+      setAvailableGeminiModels(models);
+      const requestedModel = settings.geminiModel || '';
+      const selectedModel = models.find(model => model.id === requestedModel)
+        || models.find(model => /flash/i.test(model.id) && !/preview|experimental/i.test(model.id))
+        || models[0];
+      const modelChanged = selectedModel.id !== requestedModel;
+      if (modelChanged) {
+        onUpdateSettings({ ...settings, geminiModel: selectedModel.id });
+      }
+      const modelResponse = await fetchAIWithUsage(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel.id}:generateContent?key=${key}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: 'Rispondi con una sola parola: CONNESSO' }] }] })
+      });
+      const modelData = await modelResponse.json().catch(() => ({}));
+      if (!modelResponse.ok) {
+        throw new Error(`Il modello ${selectedModel.id} non ha superato il test: ${modelData.error?.message || `HTTP ${modelResponse.status}`}`);
+      }
+
+      localStorage.setItem('bookify_gemini_api_key', key);
+      onUpdateSettings({ ...settings, geminiApiKey: key, geminiModel: selectedModel.id });
+      setKeyTestStatus({
+        success: true,
+        message: modelChanged
+          ? `Chiave verificata. ${requestedModel || 'Il modello precedente'} non e' disponibile: selezionato ${selectedModel.id}.`
+          : `Connessione riuscita a Google Gemini (${selectedModel.id}). Chiave verificata.`
+      });
     } catch (err) {
       setKeyTestStatus({
         success: false,
-        message: `✕ Errore di connessione: ${err.message}`
+        message: `✕ Verifica Gemini non riuscita: ${err.message}`
       });
     } finally {
       setIsTestingKey(false);
+    }
+  };
+
+  const handleTestCompatibleProvider = async (provider) => {
+    const isOllama = provider === 'ollama';
+    const endpointValue = isOllama ? settings.ollamaEndpoint : settings.openaiEndpoint;
+    const endpoint = (endpointValue || (isOllama ? 'http://localhost:11434/v1' : 'https://api.openai.com/v1')).trim().replace(/\/+$/, '');
+    const baseUrl = isOllama && !/\/v1$/i.test(endpoint) ? `${endpoint}/v1` : endpoint;
+    const apiKey = (settings.openaiApiKey || '').trim();
+    if (!isOllama && !apiKey) {
+      setCompatibleTestStatus(current => ({ ...current, openai: { success: false, message: 'Inserisci prima la chiave API OpenAI.' } }));
+      return;
+    }
+
+    setTestingCompatibleProvider(provider);
+    setCompatibleTestStatus(current => ({ ...current, [provider]: null }));
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        ...(!isOllama ? { Authorization: `Bearer ${apiKey}` } : {})
+      };
+      const modelsResponse = await fetch(`${baseUrl}/models`, { headers });
+      const modelsData = await modelsResponse.json().catch(() => ({}));
+      if (!modelsResponse.ok) {
+        throw new Error(modelsData.error?.message || `Elenco modelli non disponibile (HTTP ${modelsResponse.status}).`);
+      }
+
+      const models = (Array.isArray(modelsData.data) ? modelsData.data : Array.isArray(modelsData.models) ? modelsData.models : [])
+        .map(model => typeof model === 'string' ? { id: model, label: model } : {
+          id: model.id || model.name,
+          label: model.name || model.id
+        })
+        .filter(model => model.id)
+        .sort((first, second) => {
+          const preferredId = isOllama ? (settings.ollamaModel || 'llama3:latest') : (settings.openaiModel || 'gpt-4o-mini');
+          return Number(second.id === preferredId) - Number(first.id === preferredId);
+        });
+
+      if (models.length === 0) throw new Error('Il provider non ha restituito modelli disponibili.');
+      if (isOllama) setAvailableOllamaModels(models);
+      else setAvailableOpenAIModels(models);
+
+      const requestedModel = isOllama ? settings.ollamaModel : settings.openaiModel;
+      const selectedModel = models.find(model => model.id === requestedModel) || models[0];
+      const modelChanged = selectedModel.id !== requestedModel;
+      if (modelChanged) handleChange(isOllama ? 'ollamaModel' : 'openaiModel', selectedModel.id);
+
+      const testResponse = await fetchAIWithUsage(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model: selectedModel.id,
+          messages: [{ role: 'user', content: 'Rispondi con una sola parola: CONNESSO' }],
+          temperature: 0,
+          max_tokens: 8
+        })
+      });
+      const testData = await testResponse.json().catch(() => ({}));
+      if (!testResponse.ok) {
+        throw new Error(`Il modello ${selectedModel.id} non ha superato il test: ${testData.error?.message || `HTTP ${testResponse.status}`}`);
+      }
+
+      setCompatibleTestStatus(current => ({
+        ...current,
+        [provider]: {
+          success: true,
+          message: modelChanged
+            ? `Connessione riuscita. Il modello precedente non era disponibile; selezionato ${selectedModel.id}.`
+            : `Connessione riuscita con ${selectedModel.id}.`
+        }
+      }));
+    } catch (error) {
+      setCompatibleTestStatus(current => ({
+        ...current,
+        [provider]: { success: false, message: `Verifica ${isOllama ? 'Ollama' : 'OpenAI'} non riuscita: ${error.message}` }
+      }));
+    } finally {
+      setTestingCompatibleProvider(null);
     }
   };
 
@@ -162,8 +255,8 @@ export default function SettingsModal({
         style={{
           width: '820px',
           maxWidth: '95vw',
-          height: '670px',
-          maxHeight: '90vh',
+          height: 'min(670px, calc(100dvh - 3rem))',
+          flex: '0 0 auto',
           backgroundColor: 'var(--bg-secondary)',
           border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--m3-shape-dialog, 24px)',
@@ -177,6 +270,7 @@ export default function SettingsModal({
         <div 
           style={{
             padding: '1.25rem 1.75rem',
+            flexShrink: 0,
             borderBottom: '1px solid var(--border-subtle)',
             display: 'flex',
             alignItems: 'center',
@@ -195,7 +289,7 @@ export default function SettingsModal({
         </div>
 
         {/* Navigation Tabs */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
+        <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
           {[
             { id: 'theme', label: 'Temi d\'Autore', icon: Palette },
             { id: 'canvas', label: 'Foglio & Riga', icon: Square },
@@ -231,7 +325,7 @@ export default function SettingsModal({
         </div>
 
         {/* Modal Body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '1.75rem' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '1.75rem' }}>
           {/* TAB 1: THEMES */}
           {activeTab === 'theme' && (
             <div key="theme" className="m3-tab-content-fluid" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1023,7 +1117,7 @@ export default function SettingsModal({
                       </span>
                     </div>
                     <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '0.35rem 0 0 0', lineHeight: 1.45 }}>
-                      La IA agisce come un vero assistente: quando descrivi un nuovo personaggio, un luogo o un colpo di scena, li rileva e aggiorna autonomamente la scheda Bibbia con schede descrittive, tratti e ruoli.
+                      Rileva personaggi, luoghi e svolte narrative mentre scrivi. Richiede il controllo AI in tempo reale qui sotto; ogni aggiornamento può consumare token.
                     </p>
                   </div>
                 </label>
@@ -1034,19 +1128,22 @@ export default function SettingsModal({
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', cursor: 'pointer' }}>
                   <input
                     type="checkbox"
-                    checked={settings.inlineTypoAlerts ?? true}
-                    onChange={(e) => handleChange('inlineTypoAlerts', e.target.checked)}
+                    checked={settings.chunkCheckingEnabled ?? false}
+                    onChange={(event) => {
+                      localStorage.setItem('bookify_realtime_correction_preference_v1', 'true');
+                      handleChange('chunkCheckingEnabled', event.target.checked);
+                    }}
                     style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)', marginTop: '2px' }}
                   />
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
                       <Zap size={16} style={{ color: 'var(--accent-cyan)' }} />
                       <span style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                        Controllo Ortografico & Correzione Refusi in Tempo Reale
+                        Correzione e suggerimenti AI in tempo reale
                       </span>
                     </div>
                     <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '0.35rem 0 0 0', lineHeight: 1.45 }}>
-                      Motore ad alta precisione per la lingua italiana: rileva lettere invertite, vocali mancanti e doppie (es. "dve" → "dove", "troo" → "trovo", "insoiomma" → "insomma") con pulsante "Correggi Tutti" a 1-clic.
+                      Disattivata di default. Se la attivi, dopo le pause di scrittura Bookify invia il testo recente al provider AI: può consumare token. Se è attiva anche la Bibbia automatica, può partire un'ulteriore chiamata.
                     </p>
                   </div>
                 </label>
@@ -1111,6 +1208,7 @@ export default function SettingsModal({
                             const val = e.target.value;
                             handleChange('geminiApiKey', val);
                             localStorage.setItem('bookify_gemini_api_key', val.trim());
+                            setAvailableGeminiModels([]);
                             setKeyTestStatus(null);
                           }}
                           placeholder="Incolla qui la chiave API (inizia con AIzaSy...)"
@@ -1162,51 +1260,115 @@ export default function SettingsModal({
                     </label>
                     <select
                       value={settings.geminiModel || 'gemini-2.0-flash'}
-                      onChange={(e) => handleChange('geminiModel', e.target.value)}
+                      onChange={(e) => {
+                        handleChange('geminiModel', e.target.value);
+                        setKeyTestStatus(null);
+                      }}
                       style={{ width: '100%', padding: '0.6rem 0.75rem', fontSize: '0.84rem', backgroundColor: 'var(--bg-primary)', color: 'var(--text-primary)' }}
                     >
-                      <option value="gemini-2.0-flash">Gemini 2.0 Flash (Consigliato — Velocissimo, intelligente & reattivo)</option>
-                      <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash-Lite (Ultra rapido, latenza minima per companion)</option>
-                      <option value="gemini-1.5-flash">Gemini 1.5 Flash (Stabile & collaudato)</option>
-                      <option value="gemini-1.5-pro">Gemini 1.5 Pro (Massima profondità stilistica, contesti enormi & analisi trame)</option>
-                      <option value="gemini-2.0-pro-exp-02-05">Gemini 2.0 Pro Experimental (Ragionamento avanzato per scrittori)</option>
+                      {availableGeminiModels.length === 0 ? (
+                        <option value={settings.geminiModel || 'gemini-2.0-flash'}>
+                          {settings.geminiModel || 'Gemini'} · verifica la chiave per aggiornare i modelli
+                        </option>
+                      ) : availableGeminiModels.map(model => (
+                        <option key={model.id} value={model.id}>{model.label} ({model.id})</option>
+                      ))}
                     </select>
+                    <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', margin: '0.4rem 0 0' }}>
+                      {availableGeminiModels.length > 0
+                        ? 'Elenco aggiornato dei modelli compatibili con la tua chiave.'
+                        : 'Verifica la chiave per caricare i modelli attualmente disponibili per il tuo account.'}
+                    </p>
                   </div>
                 </div>
               )}
 
               {settings.aiProvider === 'openai' && (
-                <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '0.85rem', border: '1px solid var(--border-subtle)' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
                       OpenAI API Key
                     </label>
-                    <input
-                      type="password"
-                      value={settings.openaiApiKey || ''}
-                      onChange={(e) => handleChange('openaiApiKey', e.target.value)}
-                      placeholder="sk-..."
-                      style={{ width: '100%', padding: '0.55rem 0.75rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
-                    />
+                    <div style={{ display: 'flex', gap: '0.55rem' }}>
+                      <input
+                        type="password"
+                        value={settings.openaiApiKey || ''}
+                        onChange={(event) => {
+                          handleChange('openaiApiKey', event.target.value);
+                          setAvailableOpenAIModels([]);
+                          setCompatibleTestStatus(current => ({ ...current, openai: null }));
+                        }}
+                        placeholder="sk-..."
+                        style={{ flex: 1, minWidth: 0, padding: '0.55rem 0.75rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
+                      />
+                      <button type="button" onClick={() => handleTestCompatibleProvider('openai')} disabled={testingCompatibleProvider !== null} className="m3-btn m3-btn-tonal" style={{ padding: '0.5rem 0.75rem', fontSize: '0.76rem', whiteSpace: 'nowrap' }}>
+                        <Zap size={13} className={testingCompatibleProvider === 'openai' ? 'animate-spin' : ''} />
+                        {testingCompatibleProvider === 'openai' ? 'Verifica...' : 'Verifica e carica'}
+                      </button>
+                    </div>
                   </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Endpoint API</label>
+                    <input type="text" value={settings.openaiEndpoint || 'https://api.openai.com/v1'} onChange={event => { handleChange('openaiEndpoint', event.target.value); setAvailableOpenAIModels([]); setCompatibleTestStatus(current => ({ ...current, openai: null })); }} style={{ width: '100%', padding: '0.5rem 0.7rem', fontSize: '0.8rem', backgroundColor: 'var(--bg-primary)' }} />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Modello</label>
+                    <select value={settings.openaiModel || 'gpt-4o-mini'} onChange={event => { handleChange('openaiModel', event.target.value); setCompatibleTestStatus(current => ({ ...current, openai: null })); }} style={{ width: '100%', padding: '0.55rem 0.7rem', color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)' }}>
+                      {availableOpenAIModels.length === 0 ? <option value={settings.openaiModel || 'gpt-4o-mini'}>{settings.openaiModel || 'gpt-4o-mini'} · verifica per caricare i modelli</option> : availableOpenAIModels.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                    </select>
+                  </div>
+                  {compatibleTestStatus.openai && (
+                    <p role={compatibleTestStatus.openai.success ? 'status' : 'alert'} style={{ margin: 0, padding: '0.55rem 0.7rem', color: compatibleTestStatus.openai.success ? '#4ade80' : '#ef4444', background: compatibleTestStatus.openai.success ? 'rgba(74, 222, 128, 0.1)' : 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-xs)', fontSize: '0.74rem' }}>{compatibleTestStatus.openai.message}</p>
+                  )}
                 </div>
               )}
 
               {settings.aiProvider === 'ollama' && (
-                <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', display: 'flex', flexDirection: 'column', gap: '0.85rem', border: '1px solid var(--border-subtle)' }}>
                   <div>
-                    <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                      Endpoint Ollama
-                    </label>
-                    <input
-                      type="text"
-                      value={settings.ollamaEndpoint || 'http://localhost:11434/v1'}
-                      onChange={(e) => handleChange('ollamaEndpoint', e.target.value)}
-                      style={{ width: '100%', padding: '0.55rem 0.75rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
-                    />
+                    <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>Endpoint Ollama</label>
+                    <div style={{ display: 'flex', gap: '0.55rem' }}>
+                      <input
+                        type="text"
+                        value={settings.ollamaEndpoint || 'http://localhost:11434/v1'}
+                        onChange={event => { handleChange('ollamaEndpoint', event.target.value); setAvailableOllamaModels([]); setCompatibleTestStatus(current => ({ ...current, ollama: null })); }}
+                        style={{ flex: 1, minWidth: 0, padding: '0.55rem 0.75rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
+                      />
+                      <button type="button" onClick={() => handleTestCompatibleProvider('ollama')} disabled={testingCompatibleProvider !== null} className="m3-btn m3-btn-tonal" style={{ padding: '0.5rem 0.75rem', fontSize: '0.76rem', whiteSpace: 'nowrap' }}>
+                        <Zap size={13} className={testingCompatibleProvider === 'ollama' ? 'animate-spin' : ''} />
+                        {testingCompatibleProvider === 'ollama' ? 'Verifica...' : 'Verifica e carica'}
+                      </button>
+                    </div>
                   </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: '0.74rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Modello installato</label>
+                    <select value={settings.ollamaModel || 'llama3:latest'} onChange={event => { handleChange('ollamaModel', event.target.value); setCompatibleTestStatus(current => ({ ...current, ollama: null })); }} style={{ width: '100%', padding: '0.55rem 0.7rem', color: 'var(--text-primary)', backgroundColor: 'var(--bg-primary)' }}>
+                      {availableOllamaModels.length === 0 ? <option value={settings.ollamaModel || 'llama3:latest'}>{settings.ollamaModel || 'llama3:latest'} · verifica per caricare i modelli</option> : availableOllamaModels.map(model => <option key={model.id} value={model.id}>{model.label}</option>)}
+                    </select>
+                  </div>
+                  {compatibleTestStatus.ollama && (
+                    <p role={compatibleTestStatus.ollama.success ? 'status' : 'alert'} style={{ margin: 0, padding: '0.55rem 0.7rem', color: compatibleTestStatus.ollama.success ? '#4ade80' : '#ef4444', background: compatibleTestStatus.ollama.success ? 'rgba(74, 222, 128, 0.1)' : 'rgba(239, 68, 68, 0.1)', borderRadius: 'var(--radius-xs)', fontSize: '0.74rem' }}>{compatibleTestStatus.ollama.message}</p>
+                  )}
                 </div>
               )}
+
+              <div style={{ padding: '1.1rem 1.25rem', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0, color: 'var(--text-primary)', fontSize: '0.88rem' }}>Utilizzo registrato questo mese</h3>
+                  <span style={{ color: 'var(--accent-cyan)', fontSize: '0.82rem', fontWeight: '700' }}>
+                    {new Intl.NumberFormat('it-IT').format(aiUsage.providers?.[settings.aiProvider]?.totalTokens || 0)} token
+                  </span>
+                </div>
+                <p style={{ margin: '0.45rem 0', color: 'var(--text-secondary)', fontSize: '0.74rem', lineHeight: 1.5 }}>
+                  {aiUsage.providers?.[settings.aiProvider]?.requests || 0} richieste completate; token conteggiati in {aiUsage.providers?.[settings.aiProvider]?.meteredRequests || 0} risposte. Dati locali riportati dalle API, non una stima del limite residuo.
+                </p>
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.72rem', lineHeight: 1.5 }}>
+                  Le chiavi API standard non espongono un limite residuo uniforme: Gemini e OpenAI mostrano quote e soglie nei rispettivi pannelli; Ollama dipende dalle risorse locali.
+                  {' '}
+                  {settings.aiProvider === 'gemini' && <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)' }}>Apri Google AI Studio</a>}
+                  {settings.aiProvider === 'openai' && <a href="https://platform.openai.com/usage" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)' }}>Apri utilizzo OpenAI</a>}
+                </p>
+              </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: 'pointer' }}>

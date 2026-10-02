@@ -4,6 +4,7 @@ const STORAGE_KEY_LIBRARY = 'bookify_library_v2';
 const STORAGE_KEY_SETTINGS = 'bookify_settings_v2';
 const LEGACY_STORAGE_KEY_BOOK = 'bookify_book_data_v1';
 const LEGACY_STORAGE_KEY_SETTINGS = 'bookify_settings_v1';
+const REALTIME_PREFERENCE_KEY = 'bookify_realtime_correction_preference_v1';
 
 export const DEFAULT_SETTINGS = {
   // Temi & Atmosfera d'Autore
@@ -50,7 +51,7 @@ export const DEFAULT_SETTINGS = {
   ollamaModel: 'llama3:latest',
   
   // Impostazioni Ritmo Narrativo & Companion
-  chunkCheckingEnabled: true,
+  chunkCheckingEnabled: false,
   narrativePacingMode: true, // Analisi ritmo incalzante, cadenza periodi e cliffhanger
   showDontTellAssistant: true, // Rileva verbi filtro passivi
   inlineTypoAlerts: true, // Rileva refusi, doppie ed errori ortografici
@@ -286,6 +287,9 @@ export function loadSettings() {
       if (!parsed.geminiModel || parsed.geminiModel === 'gemini-2.5-flash' || parsed.geminiModel === 'gemini-pro') {
         parsed.geminiModel = 'gemini-2.0-flash';
       }
+      if (localStorage.getItem(REALTIME_PREFERENCE_KEY) !== 'true') {
+        parsed.chunkCheckingEnabled = false;
+      }
       return { ...DEFAULT_SETTINGS, ...parsed };
     }
 
@@ -294,6 +298,9 @@ export function loadSettings() {
       const parsedLegacy = JSON.parse(legacyRaw);
       if ((!parsedLegacy.geminiApiKey || parsedLegacy.geminiApiKey.trim() === '') && dedicatedKey) {
         parsedLegacy.geminiApiKey = dedicatedKey;
+      }
+      if (localStorage.getItem(REALTIME_PREFERENCE_KEY) !== 'true') {
+        parsedLegacy.chunkCheckingEnabled = false;
       }
       return { ...DEFAULT_SETTINGS, ...parsedLegacy };
     }
