@@ -30,7 +30,8 @@ export default function Editor({
   onOpenReview,
   onOpenBible,
   onOpenSettings,
-  onSaveToDisk
+  onSaveToDisk,
+  onWritingActivity
 }) {
   const textareaRef = useRef(null);
   const containerRef = useRef(null);
@@ -247,6 +248,7 @@ export default function Editor({
   // Play audio and activate Typing Focus
   const handleKeyDown = (e) => {
     audioEngine.playKey(e.key, e.code);
+    if (onWritingActivity) onWritingActivity();
 
     // Trigger Active Line Focus while typing
     if (settings.lineFocusBlur) {
@@ -510,6 +512,7 @@ export default function Editor({
 
   // Handle text input
   const handleChange = (e) => {
+    if (onWritingActivity) onWritingActivity();
     const newContent = e.target.value;
     onUpdateContent(newContent);
 
@@ -550,15 +553,20 @@ export default function Editor({
     const text = textareaRef.current.value;
     if (!text || text.trim().length < 6) return;
 
-    const lines = text.split('\n').filter(Boolean);
-    const recentChunk = lines.slice(-4).join('\n') || text;
+    const cursorPos = textareaRef.current.selectionStart ?? text.length;
+    const beforeCursor = text.slice(0, cursorPos);
+    const afterCursor = text.slice(cursorPos);
+    const linesBefore = beforeCursor.split('\n');
+    const recentChunkLines = linesBefore.slice(-4);
+    const firstLineAfter = afterCursor.split('\n')[0] || '';
+    const recentChunk = [...recentChunkLines, firstLineAfter].join('\n').trim() || text.slice(-400);
 
     setIsCheckingChunk(true);
     try {
       // 1. Text & Typo Check
       const suggestions = await checkTextChunk({
         recentText: recentChunk,
-        contextWindow: text.slice(Math.max(0, text.length - 600)),
+        contextWindow: text.slice(Math.max(0, cursorPos - 1000), Math.min(text.length, cursorPos + 300)),
         settings
       });
 
@@ -974,7 +982,10 @@ export default function Editor({
           <input
             type="text"
             value={chapter?.title || ''}
-            onChange={(e) => onUpdateContent(chapter?.content, e.target.value)}
+            onChange={(e) => {
+              if (onWritingActivity) onWritingActivity();
+              onUpdateContent(chapter?.content, e.target.value);
+            }}
             placeholder="Titolo del Capitolo..."
             aria-label="Titolo del Capitolo"
             style={{
@@ -1557,56 +1568,44 @@ export default function Editor({
             </div>
           )}
 
-          {/* Collapsed Pill Button */}
+          {/* Collapsed Actions Island (Material 3 Expressive) */}
           {activeSuggestions.length === 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <div className="m3-cluster-island">
               <button
                 type="button"
                 onClick={handleFormatForPublication}
                 title="Formatta il capitolo secondo gli standard editoriali (Ctrl+Shift+F)"
-                className="m3-chip"
+                className="m3-cluster-btn"
+                style={{ fontSize: '0.74rem', padding: '0.34rem 0.72rem' }}
+              >
+                <Feather size={12} className="m3-icon-bounce" style={{ color: 'var(--accent-amber)' }} />
+                <span>Formatta</span>
+              </button>
+
+              <div className="m3-cluster-divider" />
+
+              <button
+                type="button"
+                onClick={handleRunChapterRefinement}
+                disabled={isEnhancing || !(chapter?.content || '').trim()}
+                title="Rifinisci tutto il capitolo mantenendo trama, dettagli e voce narrativa"
+                className="m3-cluster-btn"
                 style={{
-                  padding: '0.38rem 0.75rem',
-                  backgroundColor: 'var(--bg-elevated)',
-                  color: 'var(--text-secondary)',
-                  fontSize: '0.73rem',
-                  boxShadow: '0 4px 15px rgba(0, 0, 0, 0.4)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem'
+                  fontSize: '0.74rem',
+                  padding: '0.34rem 0.72rem',
+                  color: 'var(--accent-cyan)',
+                  fontWeight: '600',
+                  opacity: isEnhancing ? 0.65 : 1
                 }}
               >
-                <Feather size={12} style={{ color: 'var(--accent-amber)' }} />
-                <span>Formatta Prosa</span>
+                <Sparkles size={12} className="m3-icon-bounce" />
+                <span>{isEnhancing && isChapterRefinementActive ? 'Rifinitura...' : 'Rifinisci'}</span>
               </button>
             </div>
           )}
-
-          <button
-            type="button"
-            onClick={handleRunChapterRefinement}
-            disabled={isEnhancing || !(chapter?.content || '').trim()}
-            title="Rifinisci tutto il capitolo mantenendo trama, dettagli e voce narrativa"
-            className="m3-chip"
-            style={{
-              padding: '0.38rem 0.75rem',
-              backgroundColor: 'var(--accent-cyan)',
-              color: '#1a1612',
-              fontSize: '0.73rem',
-              fontWeight: '700',
-              boxShadow: '0 4px 15px rgba(0, 0, 0, 0.4)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              opacity: isEnhancing ? 0.65 : 1
-            }}
-          >
-            <Feather size={12} />
-            <span>{isEnhancing && isChapterRefinementActive ? 'Rifinitura...' : 'Rifinitura'}</span>
-          </button>
         </div>
 
-        {/* Dynamic & Configurable Line Indicator HUD (Material 3 Expressive) */}
+        {/* Dynamic & Configurable Line Indicator HUD (Material 3 Expressive & Monkeytype) */}
         {settings.showLineHUD !== false && (
           <>
             {(!settings.lineHUDStyle || settings.lineHUDStyle === 'pill') && (
@@ -1614,9 +1613,9 @@ export default function Editor({
                 className="m3-line-hud"
                 title={`Posizione: Riga ${cursorLine} di ${totalLines} (${Math.round((cursorLine / Math.max(1, totalLines)) * 100)}%)`}
               >
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent-cyan)', boxShadow: '0 0 8px var(--accent-cyan)' }} />
-                <span>RIGA {cursorLine} / {totalLines}</span>
-                <span style={{ opacity: 0.65, fontSize: '0.66rem' }}>
+                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-cyan)' }} />
+                <span>riga <strong style={{ color: 'var(--accent-cyan)' }}>{cursorLine}</strong> / {totalLines}</span>
+                <span style={{ opacity: 0.6, fontSize: '0.68rem', fontFamily: 'var(--font-mono)' }}>
                   ({Math.round((cursorLine / Math.max(1, totalLines)) * 100)}%)
                 </span>
               </div>

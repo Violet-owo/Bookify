@@ -413,100 +413,91 @@ export default function ChapterReviewModal({
         )}
 
         {/* Top Header */}
-        <div 
-          style={{
-            padding: '1.4rem 1.75rem',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'linear-gradient(135deg, var(--bg-elevated) 0%, rgba(229, 169, 83, 0.08) 100%)'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div 
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: '8px',
-                background: 'var(--accent-cyan-dim)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--accent-cyan)'
-              }}
-            >
-              <Zap size={20} />
+        <div className="m3-dialog-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <div className="m3-dialog-icon-box">
+              <Zap size={22} className="m3-icon-bounce" />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
                 Stanza dell'Editor (Ritmo & Suspense)
               </h2>
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
                 {chapter.title} • Analisi della tensione e del ritmo narrativo
               </p>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '0.6rem' }}>
             <button
               onClick={runFullBookReview}
               disabled={isReviewingBook}
               title="Analizza tutti i capitoli usando sinossi, personaggi e trama del romanzo"
-              style={{ padding: '0.4rem 0.65rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent-cyan)', color: 'var(--accent-cyan)', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.75rem', opacity: isReviewingBook ? 0.65 : 1 }}
+              className="m3-chip"
+              style={{
+                color: 'var(--accent-cyan)',
+                borderColor: 'var(--accent-cyan-dim)',
+                background: 'var(--accent-cyan-dim)',
+                opacity: isReviewingBook ? 0.65 : 1
+              }}
             >
-              <BookOpen size={14} className={isReviewingBook ? 'animate-pulse' : ''} />
+              <BookOpen size={14} className={isReviewingBook ? 'animate-pulse' : 'm3-icon-bounce'} />
               <span>{isReviewingBook ? `Analisi ${bookReviewProgress?.current || 0}/${bookReviewProgress?.total || 0}${bookReviewProgress?.cached ? ' · cache' : ''}` : 'Analizza tutto il libro'}</span>
             </button>
             <button
               onClick={runReview}
               disabled={loading}
               title="Ricalcola analisi editoriale"
-              style={{
-                padding: '0.4rem 0.65rem',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-secondary)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                fontSize: '0.75rem'
-              }}
+              className="m3-chip"
             >
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+              <RefreshCw size={13} className={loading ? 'animate-spin' : 'm3-icon-bounce'} />
               <span>Rianalizza</span>
             </button>
-            <button onClick={onClose} style={{ color: 'var(--text-secondary)', padding: '0.35rem' }}>
-              <X size={20} />
+            <button 
+              onClick={onClose} 
+              className="m3-dialog-close-btn"
+              title="Chiudi analisi (Esc)"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* Pacing Score & Vital Stats Strip */}
+        {/* Pacing Score & Vital Stats Telemetry Strip */}
         {reviewData?.stats && (
           <div 
             style={{
-              padding: '1rem 1.75rem',
+              padding: '0.9rem 1.5rem',
               backgroundColor: 'var(--bg-elevated)',
               borderBottom: '1px solid var(--border-subtle)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              gap: '1rem'
+              gap: '1.25rem'
             }}
           >
             {/* Pacing Gauge */}
-            <div style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                <span style={{ fontSize: '0.76rem', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <Flame size={14} style={{ color: 'var(--accent-coral)' }} />
-                  Indice di Tensione Narrativa:
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.45rem' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: '600', color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <Flame size={15} style={{ color: pacingScore > 75 ? 'var(--accent-cyan)' : 'var(--accent-coral)' }} />
+                  Tensione Narrativa
                 </span>
-                <span style={{ fontSize: '0.86rem', fontWeight: '700', color: pacingScore > 75 ? 'var(--accent-cyan)' : 'var(--accent-coral)' }}>
-                  {pacingScore}/100 ({reviewData.pacingReview?.tensionLevel || 'Buona'})
+                <span 
+                  className="m3-chip"
+                  style={{
+                    fontSize: '0.72rem',
+                    fontWeight: '700',
+                    padding: '0.15rem 0.65rem',
+                    color: pacingScore > 75 ? 'var(--accent-cyan)' : 'var(--accent-coral)',
+                    borderColor: pacingScore > 75 ? 'var(--accent-cyan-dim)' : 'rgba(255, 118, 117, 0.3)',
+                    background: pacingScore > 75 ? 'var(--accent-cyan-dim)' : 'rgba(255, 118, 117, 0.12)'
+                  }}
+                >
+                  {pacingScore}/100 • {reviewData.pacingReview?.tensionLevel || 'Bozza'}
                 </span>
               </div>
-              <div style={{ width: '100%', height: '7px', backgroundColor: 'var(--bg-primary)', borderRadius: '4px', overflow: 'hidden' }}>
+              <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--m3-shape-full)', overflow: 'hidden', padding: '1px', border: '1px solid var(--border-subtle)' }}>
                 <div 
                   style={{
                     width: `${pacingScore}%`,
@@ -514,76 +505,112 @@ export default function ChapterReviewModal({
                     background: pacingScore > 75 
                       ? 'linear-gradient(90deg, var(--accent-amber), var(--accent-cyan))' 
                       : 'linear-gradient(90deg, var(--accent-coral), var(--accent-amber))',
-                    borderRadius: '4px',
-                    transition: 'width 0.5s ease'
+                    borderRadius: 'var(--m3-shape-full)',
+                    transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
                   }}
                 />
               </div>
             </div>
 
-            {/* Quick stats */}
-            <div style={{ display: 'flex', gap: '1rem', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '1rem' }}>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                  {reviewData.stats.wordCount}
+            {/* Manuscript Telemetry Cards */}
+            <div style={{ display: 'flex', gap: '0.5rem', borderLeft: '1px solid var(--border-subtle)', paddingLeft: '1.25rem', flexShrink: 0 }}>
+              <div 
+                className="m3-card" 
+                style={{ 
+                  padding: '0.45rem 0.85rem', 
+                  textAlign: 'center', 
+                  minWidth: '78px', 
+                  borderRadius: 'var(--m3-shape-md, 14px)',
+                  boxShadow: 'none',
+                  background: 'var(--bg-card)'
+                }}
+              >
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', lineHeight: 1.1 }}>
+                  {reviewData.stats.wordCount.toLocaleString()}
                 </div>
-                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>parole</div>
+                <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.25rem' }}>
+                  parole
+                </div>
               </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+
+              <div 
+                className="m3-card" 
+                style={{ 
+                  padding: '0.45rem 0.85rem', 
+                  textAlign: 'center', 
+                  minWidth: '78px', 
+                  borderRadius: 'var(--m3-shape-md, 14px)',
+                  boxShadow: 'none',
+                  background: 'var(--bg-card)'
+                }}
+              >
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', lineHeight: 1.1 }}>
                   {reviewData.stats.avgWordsPerSentence || 0}
                 </div>
-                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>parole/frase</div>
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                  ~{reviewData.stats.readingTimeMin} min
+                <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.25rem' }}>
+                  parole/frase
                 </div>
-                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)' }}>lettura</div>
+              </div>
+
+              <div 
+                className="m3-card" 
+                style={{ 
+                  padding: '0.45rem 0.85rem', 
+                  textAlign: 'center', 
+                  minWidth: '78px', 
+                  borderRadius: 'var(--m3-shape-md, 14px)',
+                  boxShadow: 'none',
+                  background: 'var(--bg-card)'
+                }}
+              >
+                <div style={{ fontSize: '1.1rem', fontWeight: '700', color: 'var(--text-primary)', lineHeight: 1.1 }}>
+                  ~{reviewData.stats.readingTimeMin}m
+                </div>
+                <div style={{ fontSize: '0.64rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '0.25rem' }}>
+                  lettura
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab Filters */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
-          {[
-            { id: 'pacing', label: 'Ritmo & Suspense', icon: Flame },
-            { id: 'showDontTell', label: 'Mostra non Raccontare', icon: EyeOff, count: reviewData?.showDontTell?.length },
-            { id: 'cliffhangers', label: 'Ganci & Cliffhanger', icon: Zap },
-            { id: 'orthography', label: 'Ortografia & Refusi', icon: FileCheck, count: reviewData?.orthography?.length },
-            { id: 'book', label: 'Libro intero', icon: BookOpen, count: bookFindingCount }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  flex: 1,
-                  padding: '0.75rem 0.5rem',
-                  fontSize: '0.78rem',
-                  fontWeight: isActive ? '600' : '400',
-                  color: isActive ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                  borderBottom: `2px solid ${isActive ? 'var(--accent-cyan)' : 'transparent'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.4rem',
-                  transition: 'all var(--transition-fast)'
-                }}
-              >
-                <Icon size={14} />
-                <span>{tab.label}</span>
-                {tab.count > 0 && (
-                  <span style={{ fontSize: '0.66rem', padding: '0.1rem 0.35rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--bg-elevated)' }}>
-                    {tab.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Tab Filters - 2-Tier Segmented Cluster (No Horizontal Scroll) */}
+        <div style={{ padding: '0.65rem 1.25rem', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
+          <div className="m3-segmented-cluster">
+            {[
+              { id: 'pacing', label: 'Ritmo & Suspense', icon: Flame },
+              { id: 'showDontTell', label: 'Mostra non Raccontare', icon: EyeOff, count: reviewData?.showDontTell?.length },
+              { id: 'cliffhangers', label: 'Ganci & Cliffhanger', icon: Zap },
+              { id: 'orthography', label: 'Ortografia & Refusi', icon: FileCheck, count: reviewData?.orthography?.length },
+              { id: 'book', label: 'Libro intero', icon: BookOpen, count: bookFindingCount }
+            ].map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`m3-segmented-tab ${isActive ? 'm3-segmented-tab-active' : ''}`}
+                >
+                  <Icon size={14} className="m3-icon-bounce" />
+                  <span>{tab.label}</span>
+                  {tab.count > 0 && (
+                    <span 
+                      style={{ 
+                        fontSize: '0.66rem', 
+                        padding: '0.1rem 0.4rem', 
+                        borderRadius: 'var(--m3-shape-full)', 
+                        backgroundColor: isActive ? 'var(--accent-cyan-glow)' : 'var(--bg-elevated)',
+                        color: isActive ? '#fff' : 'inherit'
+                      }}
+                    >
+                      {tab.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Main Body */}
@@ -1063,36 +1090,40 @@ export default function ChapterReviewModal({
             aria-modal="true"
             aria-labelledby="chapter-rewrite-title"
             onClick={event => event.stopPropagation()}
-            className="m3-popup-panel"
+            className="glass-panel m3-dialog-panel"
             style={{ 
               width: 'min(920px, 96vw)', 
               maxHeight: '90vh', 
               overflowY: 'auto', 
-              padding: '1.5rem', 
+              padding: '1.75rem', 
               background: 'var(--bg-secondary)', 
-              border: '1px solid var(--accent-cyan-dim)', 
-              borderRadius: 'var(--radius-md)', 
-              boxShadow: '0 24px 70px rgba(0, 0, 0, 0.8)' 
+              border: '1px solid var(--border-subtle)', 
+              borderRadius: 'var(--m3-shape-xl, 28px)', 
+              boxShadow: '0 28px 70px rgba(0, 0, 0, 0.85)' 
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
-              <div>
-                <h2 id="chapter-rewrite-title" style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <Sparkles size={18} style={{ color: 'var(--accent-cyan)' }} />
-                  Rivedi e Confronta la Proposta
-                </h2>
-                {rewriteReview.reason && (
-                  <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                    {rewriteReview.reason}
-                  </p>
-                )}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                <div className="m3-dialog-icon-box">
+                  <Sparkles size={20} className="m3-icon-bounce" />
+                </div>
+                <div>
+                  <h2 id="chapter-rewrite-title" style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.15rem', fontWeight: '700' }}>
+                    Rivedi e Confronta la Proposta
+                  </h2>
+                  {rewriteReview.reason && (
+                    <p style={{ margin: '0.2rem 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                      {rewriteReview.reason}
+                    </p>
+                  )}
+                </div>
               </div>
               <button 
                 onClick={() => setRewriteReview(null)} 
-                style={{ color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.35rem' }}
+                className="m3-dialog-close-btn"
                 aria-label="Chiudi"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 

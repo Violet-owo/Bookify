@@ -113,9 +113,12 @@ export default function BookMetadataModal({
 
   const handleApplyAllAi = () => {
     if (!aiSuggestions) return;
+    const firstTitle = typeof aiSuggestions.titles?.[0] === 'string'
+      ? aiSuggestions.titles[0]
+      : (aiSuggestions.titles?.[0]?.title || prev.title);
     setFormData(prev => ({
       ...prev,
-      title: aiSuggestions.titles?.[0]?.title || prev.title,
+      title: firstTitle,
       subtitle: aiSuggestions.tagline || prev.subtitle,
       synopsis: aiSuggestions.synopsis || prev.synopsis,
       genre: aiSuggestions.suggestedGenre || prev.genre,
@@ -170,30 +173,9 @@ export default function BookMetadataModal({
         }}
       >
         {/* Header with Icon Bounce */}
-        <div 
-          style={{
-            padding: '1.25rem 2rem',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--bg-elevated)'
-          }}
-        >
+        <div className="m3-dialog-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-            <div 
-              style={{
-                width: '42px',
-                height: '42px',
-                borderRadius: 'var(--m3-shape-card, 16px)',
-                backgroundColor: 'var(--accent-cyan-dim)',
-                color: 'var(--accent-cyan)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '1px solid var(--accent-cyan-glow)'
-              }}
-            >
+            <div className="m3-dialog-icon-box">
               <BookMarked size={22} className="m3-icon-bounce" />
             </div>
             <div>
@@ -207,55 +189,43 @@ export default function BookMetadataModal({
           </div>
           <button 
             onClick={onClose} 
-            className="m3-btn-text"
+            className="m3-dialog-close-btn"
             title="Chiudi scheda (Esc)"
-            style={{ borderRadius: '50%', width: '38px', height: '38px', padding: 0 }}
           >
-            <X size={20} className="m3-icon-bounce" />
+            <X size={18} />
           </button>
         </div>
 
-        {/* Tab Navigation with Liquid Pill Indicator */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
-          {[
-            { id: 'main', label: 'Dati & Metriche', icon: Layers },
-            { id: 'synopsis', label: 'Sinossi & Voce Narrativa', icon: FileText },
-            { 
-              id: 'ai', 
-              label: hasEnoughWordsForAi ? 'Suggerimenti AI (Sbloccato)' : `Suggerimenti AI (${totalWords}/${minWordsForAi})`, 
-              icon: Sparkles,
-              isHighlight: hasEnoughWordsForAi
-            }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                style={{
-                  flex: 1,
-                  padding: '0.85rem 1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                  fontSize: '0.82rem',
-                  fontWeight: isActive ? '700' : '500',
-                  color: isActive ? 'var(--accent-cyan)' : tab.isHighlight ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  borderBottom: `2.5px solid ${isActive ? 'var(--accent-cyan)' : 'transparent'}`,
-                  backgroundColor: isActive ? 'var(--accent-cyan-dim)' : 'transparent',
-                  transition: 'all var(--anim-duration, 280ms) var(--anim-easing)'
-                }}
-              >
-                <Icon size={15} className="m3-icon-bounce" style={{ color: tab.isHighlight ? 'var(--accent-cyan)' : 'inherit' }} />
-                <span>{tab.label}</span>
-                {tab.id === 'ai' && !hasEnoughWordsForAi && (
-                  <Lock size={12} style={{ opacity: 0.6 }} />
-                )}
-              </button>
-            );
-          })}
+        {/* Tab Navigation with M3 Segmented Grid (No Horizontal Scroll) */}
+        <div style={{ padding: '0.75rem 1.75rem', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
+          <div className="m3-segmented-grid m3-segmented-grid-3">
+            {[
+              { id: 'main', label: 'Dati & Metriche', icon: Layers },
+              { id: 'synopsis', label: 'Sinossi & Voce Narrativa', icon: FileText },
+              { 
+                id: 'ai', 
+                label: hasEnoughWordsForAi ? 'Suggerimenti AI (Sbloccato)' : `Suggerimenti AI (${totalWords}/${minWordsForAi})`, 
+                icon: Sparkles,
+                isHighlight: hasEnoughWordsForAi
+              }
+            ].map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`m3-segmented-tab ${isActive ? 'm3-segmented-tab-active' : ''}`}
+                >
+                  <Icon size={14} className="m3-icon-bounce" style={{ color: tab.isHighlight ? 'var(--accent-cyan)' : 'inherit' }} />
+                  <span>{tab.label}</span>
+                  {tab.id === 'ai' && !hasEnoughWordsForAi && (
+                    <Lock size={12} style={{ opacity: 0.6 }} />
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Form Body */}
@@ -635,42 +605,47 @@ export default function BookMetadataModal({
                           <span>3 Proposte di Titolo per il tuo Romanzo</span>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                          {aiSuggestions.titles.map((t, idx) => (
-                            <div 
-                              key={idx}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                padding: '0.75rem 1rem',
-                                borderRadius: 'var(--radius-sm)',
-                                backgroundColor: 'var(--bg-primary)',
-                                border: '1px solid var(--border-subtle)'
-                              }}
-                            >
-                              <div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                  <span style={{ fontSize: '0.98rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
-                                    «{t.title}»
-                                  </span>
-                                  <span style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--accent-cyan-dim)', color: 'var(--accent-cyan)', fontWeight: '600' }}>
-                                    {t.style}
-                                  </span>
-                                </div>
-                                <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                                  {t.reason}
-                                </p>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleApplySingle('title', t.title, 'Titolo')}
-                                className="m3-btn m3-btn-tonal"
-                                style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                          {aiSuggestions.titles.map((t, idx) => {
+                            const titleText = typeof t === 'string' ? t : (t?.title || `Proposta ${idx + 1}`);
+                            const styleText = t?.style || 'Narrativa';
+                            const reasonText = t?.reason || 'Adatto al tono del libro';
+                            return (
+                              <div 
+                                key={idx}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '0.75rem 1rem',
+                                  borderRadius: 'var(--radius-sm)',
+                                  backgroundColor: 'var(--bg-primary)',
+                                  border: '1px solid var(--border-subtle)'
+                                }}
                               >
-                                Usa Titolo
-                              </button>
-                            </div>
-                          ))}
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                    <span style={{ fontSize: '0.98rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
+                                      «{titleText}»
+                                    </span>
+                                    <span style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--accent-cyan-dim)', color: 'var(--accent-cyan)', fontWeight: '600' }}>
+                                      {styleText}
+                                    </span>
+                                  </div>
+                                  <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
+                                    {reasonText}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplySingle('title', titleText, 'Titolo')}
+                                  className="m3-btn m3-btn-tonal"
+                                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
+                                >
+                                  Usa Titolo
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
 

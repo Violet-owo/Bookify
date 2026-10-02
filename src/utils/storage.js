@@ -32,6 +32,7 @@ export const DEFAULT_SETTINGS = {
   
   typewriterMode: true,
   focusMode: false,
+  autoHideUIOnType: true, // Dissolvenza automatica dell'interfaccia durante la scrittura, sempre visibile a riposo
   
   // Paesaggi Sonori & Switch Tasti
   soundEnabled: true,
@@ -61,6 +62,10 @@ export const DEFAULT_SETTINGS = {
   // Salvataggio & File Locale PC
   autosaveEnabled: true,
   autosaveIntervalSeconds: 30, // 10 | 30 | 60 | 120 | 300 | 0 (disattivato)
+
+  // Lingua dell'applicazione & AI
+  language: 'it', // 'it' | 'en'
+  developerPortfolioUrl: 'https://github.com'
 };
 
 const DEFAULT_INITIAL_BOOK = {

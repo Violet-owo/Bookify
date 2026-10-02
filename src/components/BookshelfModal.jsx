@@ -105,42 +105,22 @@ export default function BookshelfModal({
         }}
       >
         {/* Header */}
-        <div 
-          style={{
-            padding: '1.5rem 2rem',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'linear-gradient(to right, var(--bg-elevated), transparent)'
-          }}
-        >
+        <div className="m3-dialog-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-            <div 
-              style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--accent-cyan-dim)',
-                color: 'var(--accent-cyan)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <Bookmark size={22} />
+            <div className="m3-dialog-icon-box">
+              <Bookmark size={20} className="m3-icon-bounce" />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.25rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
-                La Tua Biblioteca di Romanzi
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
+                Biblioteca dei Romanzi
               </h2>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                Gestisci più libri contemporaneamente, tieni traccia degli obiettivi e passa da un manoscritto all'altro.
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
+                Gestisci le tue opere letterarie, obiettivi di parole e versioni dei manoscritti.
               </p>
             </div>
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
             <button
               type="button"
               onClick={() => {
@@ -149,43 +129,23 @@ export default function BookshelfModal({
                   onClose();
                 }
               }}
-              style={{
-                padding: '0.5rem 0.9rem',
-                backgroundColor: 'var(--bg-elevated)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-                borderRadius: 'var(--radius-sm)',
-                fontWeight: '600',
-                fontSize: '0.84rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                cursor: 'pointer'
-              }}
+              className="m3-chip"
+              style={{ padding: '0.45rem 0.85rem', fontSize: '0.78rem' }}
             >
-              <FolderOpen size={16} style={{ color: 'var(--accent-amber)' }} />
-              <span>Apri File .bookify</span>
+              <FolderOpen size={14} className="m3-icon-bounce" style={{ color: 'var(--accent-amber)' }} />
+              <span>Apri da PC</span>
             </button>
 
             <button
               onClick={() => setIsCreating(true)}
-              style={{
-                padding: '0.5rem 1rem',
-                backgroundColor: 'var(--accent-cyan)',
-                color: '#1a1612',
-                borderRadius: 'var(--radius-sm)',
-                fontWeight: '600',
-                fontSize: '0.84rem',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                boxShadow: '0 2px 10px var(--accent-cyan-dim)'
-              }}
+              className="m3-btn m3-btn-filled"
+              style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
             >
-              <Plus size={16} /> Nuovo Romanzo
+              <Plus size={15} className="m3-icon-bounce" /> Nuovo Romanzo
             </button>
-            <button onClick={onClose} style={{ color: 'var(--text-secondary)', padding: '0.4rem' }}>
-              <X size={20} />
+
+            <button onClick={onClose} className="m3-dialog-close-btn" title="Chiudi (Esc)">
+              <X size={17} />
             </button>
           </div>
         </div>
@@ -334,24 +294,14 @@ export default function BookshelfModal({
                     onSelectBook(b.id);
                     onClose();
                   }}
+                  className={`m3-card ${isActive ? 'm3-card-active' : ''}`}
                   style={{
-                    backgroundColor: isActive ? 'var(--bg-elevated)' : 'var(--bg-card)',
-                    border: `1.5px solid ${isActive ? 'var(--accent-cyan)' : 'var(--border-subtle)'}`,
-                    borderRadius: 'var(--radius-md)',
-                    padding: '1.25rem',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
                     position: 'relative',
-                    transition: 'all var(--transition-normal)',
-                    boxShadow: isActive ? '0 10px 25px var(--accent-cyan-dim)' : '0 4px 15px rgba(0, 0, 0, 0.2)'
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) e.currentTarget.style.borderColor = 'var(--accent-cyan-dim)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) e.currentTarget.style.borderColor = 'var(--border-subtle)';
+                    overflow: 'hidden'
                   }}
                 >
                   {/* Spine Color Accent Tag */}

@@ -1,4 +1,5 @@
 import { analyzeItalianOrthography } from './italianLexicon';
+import { analyzeEnglishOrthography } from './englishLexicon';
 
 const AI_USAGE_EVENT = 'bookify-ai-usage-updated';
 
@@ -127,8 +128,11 @@ export async function checkTextChunk({ recentText, contextWindow = '', settings 
     return [];
   }
 
-  // Always compute immediate, high-accuracy Italian orthography & typo checks
-  const localTypos = analyzeItalianOrthography(recentText);
+  const isEn = settings.language === 'en';
+  // Compute immediate, high-accuracy orthography & typo checks according to language
+  const localTypos = isEn
+    ? analyzeEnglishOrthography(recentText)
+    : analyzeItalianOrthography(recentText);
 
   const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
 
@@ -136,7 +140,7 @@ export async function checkTextChunk({ recentText, contextWindow = '', settings 
   // Gemini API
   if (aiProvider === 'gemini' && geminiApiKey) {
     try {
-      remoteSuggestions = await checkChunkWithGemini({ recentText, contextWindow, apiKey: geminiApiKey, model: geminiModel });
+      remoteSuggestions = await checkChunkWithGemini({ recentText, contextWindow, apiKey: geminiApiKey, model: geminiModel, language: settings.language });
     } catch (err) {
       console.warn('Gemini chunk check failed, using local companion:', err);
     }
@@ -147,7 +151,7 @@ export async function checkTextChunk({ recentText, contextWindow = '', settings 
       const endpoint = aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint;
       const model = aiProvider === 'ollama' ? ollamaModel : openaiModel;
       const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      remoteSuggestions = await checkChunkWithOpenAICompatible({ recentText, contextWindow, endpoint, model, apiKey: key });
+      remoteSuggestions = await checkChunkWithOpenAICompatible({ recentText, contextWindow, endpoint, model, apiKey: key, language: settings.language });
     } catch (err) {
       console.warn('OpenAI/Ollama chunk check failed, using local companion:', err);
     }
@@ -659,10 +663,45 @@ Restituisci ESCLUSIVAMENTE un JSON:
 
   if (mode === 'refinement') throw new Error('La Rifinitura non ha prodotto una risposta valida. Riprova.');
 
-  // Fallback heuristic rewrite
+  // Intelligent fallback heuristic rewrite tailored to mode
+  if (mode === 'pacingBoost') {
+    const punchy = text
+      .replace(/,\s*(e poi|mentre|quando improvvisamente|a quel punto)\b/gi, '. $1')
+      .replace(/\b(improvvisamente|lentamente|assolutamente|decisamente|incredibilmente)\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return {
+      improved: punchy,
+      explanation: 'Accorciati i periodi complessi ed eliminati avverbi lenti per dare urgenza e ritmo alla scena.'
+    };
+  }
+
+  if (mode === 'dialogueSharp') {
+    const sharp = text
+      .replace(/\b(disse parlando|esclamò ad alta voce|chiese domandando|rispose dicendo)\b/gi, 'disse')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return {
+      improved: sharp,
+      explanation: 'Semplificati i verbi di dialogo ed eliminate ridondanze descrittive.'
+    };
+  }
+
+  if (mode === 'showDontTell') {
+    const direct = text
+      .replace(/\b(si accorse che|vide che|sentì che|notò che|avvertì che|pareva che|sembrava che)\b/gi, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return {
+      improved: direct,
+      explanation: 'Rimossi i verbi filtro per rendere la scena viscerale e mostrata direttamente.'
+    };
+  }
+
+  // sensoryRich or default
   return {
-    improved: text.replace(/\b(si accorse che|vide che|sentì che|notò che)\b/gi, '').trim(),
-    explanation: 'Rimossi i verbi filtro per rendere la narrazione più immediata e vicina agli occhi del protagonista.'
+    improved: text.replace(/\b(si accorse che|vide che|sentì che|notò che)\b/gi, '').replace(/\s{2,}/g, ' ').trim(),
+    explanation: 'Rimossi i filtri per avvicinare il punto di vista sensoriale agli occhi del protagonista.'
   };
 }
 
@@ -734,7 +773,17 @@ Rispondi ESCLUSIVAMENTE in formato JSON con questo schema:
         const raw = getGeminiText(data);
         const parsed = parseJsonSafe(raw, null);
         if (parsed?.titles?.length) {
-          return { success: true, ...parsed, wordsCount: words.length };
+          const normalizedTitles = parsed.titles.map((t, idx) => {
+            if (typeof t === 'string') {
+              return { title: t, style: `Proposta ${idx + 1}`, reason: 'Elaborato dai temi narrativi del manoscritto.' };
+            }
+            return {
+              title: t?.title || `Proposta ${idx + 1}`,
+              style: t?.style || 'Narrativa',
+              reason: t?.reason || 'Evocativo per il tono dell\'opera.'
+            };
+          });
+          return { success: true, ...parsed, titles: normalizedTitles, wordsCount: words.length };
         }
       }
     } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
@@ -758,7 +807,17 @@ Rispondi ESCLUSIVAMENTE in formato JSON con questo schema:
         const content = data.choices?.[0]?.message?.content;
         const parsed = parseJsonSafe(extractJsonFromMarkdown(content), null);
         if (parsed?.titles?.length) {
-          return { success: true, ...parsed, wordsCount: words.length };
+          const normalizedTitles = parsed.titles.map((t, idx) => {
+            if (typeof t === 'string') {
+              return { title: t, style: `Proposta ${idx + 1}`, reason: 'Elaborato dai temi narrativi del manoscritto.' };
+            }
+            return {
+              title: t?.title || `Proposta ${idx + 1}`,
+              style: t?.style || 'Narrativa',
+              reason: t?.reason || 'Evocativo per il tono dell\'opera.'
+            };
+          });
+          return { success: true, ...parsed, titles: normalizedTitles, wordsCount: words.length };
         }
       }
     }
@@ -1269,21 +1328,36 @@ function runLocalHeuristicChapterReview(chapterText, chapterTitle) {
 }
 
 /* Helpers */
-function parseJsonSafe(str, fallback) {
+export function parseJsonSafe(str, fallback) {
   if (!str) return fallback;
   try {
     return JSON.parse(str);
   } catch {
     try {
       const match = str.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
-      if (match) return JSON.parse(match[0]);
-    } catch {}
+      if (match) {
+        // Strip trailing commas before closing braces/brackets
+        const cleaned = match[0].replace(/,\s*([\]}])/g, '$1');
+        return JSON.parse(cleaned);
+      }
+    } catch {
+      try {
+        const match = str.match(/\{[\s\S]*\}|\[[\s\S]*\]/);
+        if (match) {
+          // Normalize unescaped newlines within json strings
+          const sanitized = match[0]
+            .replace(/(?<!\\)\r?\n/g, ' ')
+            .replace(/,\s*([\]}])/g, '$1');
+          return JSON.parse(sanitized);
+        }
+      } catch {}
+    }
     return fallback;
   }
 }
 
-function extractJsonFromMarkdown(md) {
+export function extractJsonFromMarkdown(md) {
   if (!md) return '';
-  const match = md.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-  return match ? match[1] : md;
+  const match = md.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  return match ? match[1].trim() : md.trim();
 }

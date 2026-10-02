@@ -3,9 +3,9 @@
 export const KEY_PROFILES = [
   {
     id: 'akko',
-    name: 'Akko Lavender Purple',
-    description: 'Switch tattile clacky, bump deciso e tono medio-basso',
-    badge: 'Tattile Clack'
+    name: 'Purple Lavender Switch (Suoni Reali)',
+    description: 'Switch tattili originali registrati in studio con 9 campioni acustici reali distinti per tasto',
+    badge: 'Audio Reale 9x'
   },
   {
     id: 'thock',
@@ -108,6 +108,10 @@ class CozyAudioEngine {
     this.whiteNoiseBuffer = null;
     this.pinkNoiseBuffer = null;
 
+    // Real sound samples for Purple Lavender (key1.wav - key9.wav)
+    this.lavenderBuffers = [];
+    this.isLoadingLavender = false;
+
     // Load saved settings
     try {
       const v = localStorage.getItem('bookify_audio_volume');
@@ -144,9 +148,41 @@ class CozyAudioEngine {
     // Buffers for synthesis
     this.createBuffers();
 
+    // Preload authentic Purple Lavender audio samples
+    this.loadLavenderSamples();
+
     // Start ambient if set
     if (this.ambientTrack && this.ambientTrack !== 'none') {
       this.startAmbient(this.ambientTrack);
+    }
+  }
+
+  async loadLavenderSamples() {
+    if (this.lavenderBuffers.length > 0 || this.isLoadingLavender) return;
+    this.ensureContext();
+    if (!this.ctx) return;
+
+    this.isLoadingLavender = true;
+    const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.BASE_URL) || '/';
+    const cleanBase = baseUrl.replace(/\/$/, '');
+    const sampleFiles = [1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => `${cleanBase}/sounds/purple-lavender/key${num}.wav`);
+
+    try {
+      const loadedBuffers = await Promise.all(
+        sampleFiles.map(async (url) => {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP ${res.status} on ${url}`);
+          const arrayBuffer = await res.arrayBuffer();
+          return await new Promise((resolve, reject) => {
+            this.ctx.decodeAudioData(arrayBuffer, resolve, reject);
+          });
+        })
+      );
+      this.lavenderBuffers = loadedBuffers;
+    } catch (err) {
+      console.warn('Caricamento campioni audio Purple Lavender non riuscito, fallback procedurale attivo:', err);
+    } finally {
+      this.isLoadingLavender = false;
     }
   }
 
@@ -194,6 +230,9 @@ class CozyAudioEngine {
     try {
       localStorage.setItem('bookify_audio_profile', profileId);
     } catch {}
+    if (profileId === 'akko') {
+      this.loadLavenderSamples();
+    }
   }
 
   setVolume(newVolume) {
@@ -288,9 +327,87 @@ class CozyAudioEngine {
         break;
       case 'akko':
       default:
-        this.synthesizeAkkoLavender(key, code, jitter);
+        this.playPurpleLavender(key, code, jitter);
         break;
     }
+  }
+
+  /* PURPLE LAVENDER SWITCHES — 9 REAL AUDIO SAMPLES MAPPED BY PHYSICAL KEY */
+  playPurpleLavender(key, code, jitter) {
+    if (!this.lavenderBuffers || this.lavenderBuffers.length === 0) {
+      if (!this.isLoadingLavender) {
+        this.loadLavenderSamples();
+      }
+      this.synthesizeAkkoLavender(key, code, jitter);
+      return;
+    }
+
+    const now = this.ctx.currentTime;
+
+    // 1. Identify which sample to play based on physical key and layout
+    let sampleIdx = 0;
+    let baseGain = 1.0;
+    let basePitch = 1.0;
+
+    if (code === 'Space' || key === ' ') {
+      // Spacebar: deep, resonant stabilizer sample (key6.wav, index 5)
+      sampleIdx = 5;
+      baseGain = 1.15;
+      basePitch = 0.96;
+    } else if (code === 'Enter') {
+      // Enter: wide return switch (key5.wav, index 4)
+      sampleIdx = 4;
+      baseGain = 1.1;
+      basePitch = 0.98;
+    } else if (code === 'Backspace' || code === 'Delete') {
+      // Backspace: crisp wide key (key3.wav, index 2)
+      sampleIdx = 2;
+      baseGain = 1.05;
+      basePitch = 1.02;
+    } else if (code === 'Tab' || code === 'ShiftLeft' || code === 'ShiftRight' || code === 'ControlLeft' || code === 'AltLeft') {
+      // Modifiers: key7.wav (index 6) or key2.wav (index 1)
+      sampleIdx = code === 'Tab' ? 6 : 1;
+      baseGain = 0.95;
+    } else {
+      // Alphanumeric keys: assign specific sample based on physical keyboard layout
+      const KEY_TO_SAMPLE = {
+        'KeyQ': 0, 'KeyW': 1, 'KeyE': 2, 'KeyR': 3, 'KeyT': 6, 'KeyY': 7, 'KeyU': 8, 'KeyI': 0, 'KeyO': 1, 'KeyP': 2,
+        'KeyA': 3, 'KeyS': 6, 'KeyD': 7, 'KeyF': 8, 'KeyG': 0, 'KeyH': 1, 'KeyJ': 2, 'KeyK': 3, 'KeyL': 6,
+        'KeyZ': 7, 'KeyX': 8, 'KeyC': 0, 'KeyV': 1, 'KeyB': 2, 'KeyN': 3, 'KeyM': 6,
+        'Digit1': 0, 'Digit2': 1, 'Digit3': 2, 'Digit4': 3, 'Digit5': 0,
+        'Digit6': 1, 'Digit7': 2, 'Digit8': 3, 'Digit9': 0, 'Digit0': 1,
+        'Comma': 7, 'Period': 8, 'Minus': 0, 'Equal': 1, 'Semicolon': 2, 'Quote': 3,
+        'BracketLeft': 7, 'BracketRight': 8, 'Backslash': 0, 'Slash': 1
+      };
+
+      if (code && KEY_TO_SAMPLE[code] !== undefined) {
+        sampleIdx = KEY_TO_SAMPLE[code];
+      } else {
+        // Fallback deterministic hash by character code
+        const charCode = (key || code || 'a').charCodeAt(0) || 65;
+        sampleIdx = Math.abs(charCode) % this.lavenderBuffers.length;
+      }
+    }
+
+    sampleIdx = Math.max(0, Math.min(this.lavenderBuffers.length - 1, sampleIdx));
+    const buffer = this.lavenderBuffers[sampleIdx];
+    if (!buffer) return;
+
+    // 2. Add subtle natural pitch & velocity variation (human touch)
+    const microJitter = (Math.random() * 0.04) - 0.02; // ±2% natural pitch nuance
+    const velocityNuance = 0.92 + (Math.random() * 0.16); // natural strike velocity
+
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.setValueAtTime(Math.max(0.5, basePitch + microJitter), now);
+
+    const keyGain = this.ctx.createGain();
+    keyGain.gain.setValueAtTime(baseGain * velocityNuance, now);
+
+    source.connect(keyGain);
+    keyGain.connect(this.masterGain);
+
+    source.start(now);
   }
 
   /* CLICK TATTILE CHIRURGICO (Ultra-fast snappy click) */

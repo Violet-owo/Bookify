@@ -12,9 +12,12 @@ export default function BottomBar({
   onOpenReview,
   onOpenBible,
   onAcceptSuggestion,
-  activeSuggestionCount = 0
+  activeSuggestionCount = 0,
+  isWriting = false
 }) {
   const [isHovered, setIsHovered] = useState(false);
+
+  const isBarHidden = isWriting && !isHovered;
 
   const text = currentChapter?.content || '';
   const charCount = text.length;
@@ -23,9 +26,24 @@ export default function BottomBar({
 
   const autosaveInterval = settings?.autosaveIntervalSeconds ?? 30;
 
+  const getSoundProfileLabel = () => {
+    switch (settings.soundProfile) {
+      case 'thock': return 'Deep Thock';
+      case 'typewriter': return 'Olivetti';
+      case 'rain_keys': return 'Ceramica';
+      case 'wooden': return 'Legno';
+      case 'velvet': return 'Velvet';
+      case 'cherry_blue': return 'Cherry Blue';
+      case 'holy_panda': return 'Holy Panda';
+      case 'hitmarker': return 'Chirurgico';
+      case 'akko':
+      default: return 'Purple Lavender';
+    }
+  };
+
   return (
     <footer
-      className={`ghost-ui ${isHovered ? 'ghost-ui-active' : ''}`}
+      className={`studio-ui ghost-ui ${isBarHidden ? 'studio-ui-hidden' : 'studio-ui-visible'}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       style={{
@@ -33,149 +51,140 @@ export default function BottomBar({
         bottom: 0,
         left: 0,
         right: 0,
-        height: '42px',
+        height: '52px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 2rem',
+        padding: '0 1.25rem',
         zIndex: 50,
-        fontSize: '0.72rem',
-        color: 'var(--text-secondary)',
-        background: 'linear-gradient(to top, rgba(22, 22, 42, 0.95) 0%, rgba(22, 22, 42, 0) 100%)',
-        backdropFilter: isHovered ? 'blur(8px)' : 'none'
+        background: 'linear-gradient(to top, var(--bg-overlay) 65%, transparent 100%)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
+        transition: 'opacity var(--transition-smooth), transform var(--transition-smooth)',
+        userSelect: 'none'
       }}
     >
-      {/* Left: Reading stats */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <Clock size={13} style={{ color: 'var(--accent-cyan)' }} />
-          <span>~{readingTime} min lettura</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-          <Type size={13} />
-          <span>{charCount.toLocaleString()} caratteri ({words.length.toLocaleString()} parole)</span>
-        </div>
+      {/* 1. Left Island: Monkeytype-style Live Typing Counters */}
+      <div className="monkey-stat-pill" title="Metriche di lettura e scrittura in tempo reale">
+        <span>{words.length.toLocaleString()} parole</span>
+        <div className="monkey-stat-dot" />
+        <span style={{ opacity: 0.8 }}>{charCount.toLocaleString()} car</span>
+        <div className="monkey-stat-dot" />
+        <span style={{ opacity: 0.8 }}>~{readingTime} min</span>
         {settings.soundEnabled && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: 'var(--cursor-neon)', opacity: 0.85 }}>
-              <Volume2 size={13} />
-              <span>
-                {settings.soundProfile === 'thock' && 'Deep Thock & Butter'}
-                {settings.soundProfile === 'typewriter' && 'Olivetti Typewriter'}
-                {settings.soundProfile === 'rain_keys' && 'Ceramica & Gocce'}
-                {settings.soundProfile === 'wooden' && 'Legno Caldo'}
-                {settings.soundProfile === 'velvet' && 'Silent Velvet'}
-                {(!settings.soundProfile || settings.soundProfile === 'akko') && 'Akko Lavender Purple'}
-              </span>
-            </div>
-            {settings.ambientTrack && settings.ambientTrack !== 'none' && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--accent-cyan)', opacity: 0.9 }}>
-                <span>•</span>
-                <span>
-                  {settings.ambientTrack === 'rain' && '🌧️ Pioggia'}
-                  {settings.ambientTrack === 'fireplace' && '🔥 Camino'}
-                  {settings.ambientTrack === 'alpha' && '🧠 Onde 432Hz'}
-                  {settings.ambientTrack === 'autumn' && '🍂 Vento'}
-                  {settings.ambientTrack === 'cafe' && '☕ Caffè'}
-                  {settings.ambientTrack === 'vinyl' && '📻 Vinile'}
-                </span>
-              </div>
-            )}
-          </div>
+          <>
+            <div className="monkey-stat-dot" />
+            <span style={{ color: 'var(--accent-cyan)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+              <Volume2 size={11} /> {getSoundProfileLabel()}
+            </span>
+          </>
         )}
       </div>
 
-      {/* Center/Right: Autosave & Interactive Material 3 Action Chips */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-        {/* Open from PC Disk Button */}
-        <button
-          onClick={onOpenFileFromDisk}
-          className="m3-chip"
-          title="Apri un romanzo (.bookify o .json) dal tuo PC (Ctrl+O)"
-          style={{
-            backgroundColor: 'var(--bg-elevated)',
-            borderColor: 'var(--border-subtle)',
-            color: 'var(--text-secondary)'
-          }}
-        >
-          <FolderOpen size={12} style={{ color: 'var(--accent-amber)' }} />
-          <span>Apri .bookify</span>
-        </button>
-
-        {/* Autosave PC File Chip */}
+      {/* 2. Center Island: Disk File Sync & Autosave Status */}
+      <div className="m3-cluster-island">
         <button
           onClick={onSaveToDisk}
-          className="m3-chip"
-          title="Fai clic per salvare subito su file .bookify / JSON sul tuo PC (Ctrl+S)"
-          style={{
-            backgroundColor: connectedFileName ? 'rgba(74, 222, 128, 0.12)' : 'var(--bg-elevated)',
-            borderColor: connectedFileName ? 'rgba(74, 222, 128, 0.4)' : 'var(--border-subtle)',
-            color: connectedFileName ? '#4ade80' : 'var(--text-secondary)'
-          }}
+          className="m3-cluster-btn"
+          title={connectedFileName ? `File collegato: ${connectedFileName} (Ctrl+S per salvare)` : 'Salva su file PC (Ctrl+S)'}
+          style={{ padding: '0.32rem 0.75rem', fontSize: '0.74rem' }}
         >
-          <span style={{ fontSize: '0.75rem' }}>{connectedFileName ? '💾' : '📁'}</span>
+          <div 
+            style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              backgroundColor: connectedFileName ? 'var(--accent-green, #4ade80)' : 'var(--accent-cyan)',
+              boxShadow: connectedFileName ? '0 0 6px rgba(74, 222, 128, 0.6)' : '0 0 6px var(--accent-cyan-glow)'
+            }}
+          />
           <span style={{ fontWeight: '600' }}>
-            {connectedFileName ? connectedFileName : 'Salva su File PC'}
+            {connectedFileName ? connectedFileName : 'Memoria Locale'}
           </span>
           {lastSavedTime && (
-            <span style={{ opacity: 0.7, fontSize: '0.65rem' }}>
-              • {lastSavedTime instanceof Date ? lastSavedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : String(lastSavedTime)}
+            <span style={{ opacity: 0.6, fontSize: '0.66rem' }}>
+              • {lastSavedTime instanceof Date ? lastSavedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : String(lastSavedTime)}
             </span>
           )}
           {settings.autosaveEnabled !== false && autosaveInterval > 0 && (
-            <span style={{ opacity: 0.6, fontSize: '0.62rem' }}>
+            <span style={{ opacity: 0.5, fontSize: '0.62rem' }}>
               ({autosaveInterval}s)
             </span>
           )}
         </button>
+      </div>
 
-        {/* Interactive Functional Shortcut Chips */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-          {/* Ctrl+A Accetta (illuminated if suggestions exist) */}
-          <button 
-            onClick={onAcceptSuggestion}
-            className="m3-chip"
-            title="Accetta il suggerimento ortografico/stilistico dell'AI Companion (Ctrl+A o Ctrl+Enter)"
-            style={{
-              backgroundColor: activeSuggestionCount > 0 ? 'var(--accent-cyan-dim)' : 'var(--bg-elevated)',
-              borderColor: activeSuggestionCount > 0 ? 'var(--accent-cyan)' : 'var(--border-subtle)',
-              color: activeSuggestionCount > 0 ? 'var(--accent-cyan)' : 'var(--text-secondary)'
-            }}
-          >
-            <kbd style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.35rem', borderRadius: '3px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)', fontSize: '0.68rem' }}>Ctrl+A</kbd>
-            <span>Accetta {activeSuggestionCount > 0 ? `(${activeSuggestionCount})` : ''}</span>
-          </button>
+      {/* 3. Right Island: Fast Studio Keyboard Shortcuts */}
+      <div className="m3-cluster-island">
+        {activeSuggestionCount > 0 && (
+          <>
+            <button
+              onClick={onAcceptSuggestion}
+              className="m3-cluster-btn m3-cluster-btn-active"
+              title="Accetta suggerimento dell'AI Companion (Ctrl+A)"
+              style={{ fontSize: '0.72rem', padding: '0.28rem 0.65rem' }}
+            >
+              <kbd style={{ background: 'rgba(0,0,0,0.3)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem' }}>Ctrl+A</kbd>
+              <span>Accetta ({activeSuggestionCount})</span>
+            </button>
+            <div className="m3-cluster-divider" />
+          </>
+        )}
 
-          {/* Ctrl+R Revisione */}
-          <button 
-            onClick={onOpenReview}
-            className="m3-chip"
-            title="Apri Stanza dell'Editor per revisionare ritmo, suspense e cliffhanger (Ctrl+R)"
-          >
-            <kbd style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.35rem', borderRadius: '3px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)', fontSize: '0.68rem' }}>Ctrl+R</kbd>
-            <span>Revisione</span>
-          </button>
+        <button
+          onClick={onOpenFileFromDisk}
+          className="m3-cluster-btn"
+          title="Apri file .bookify / JSON dal PC (Ctrl+O)"
+          style={{ fontSize: '0.72rem', padding: '0.28rem 0.55rem' }}
+        >
+          <kbd style={{ background: 'var(--bg-elevated)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem', border: '1px solid var(--border-subtle)' }}>Ctrl+O</kbd>
+          <span>Apri</span>
+        </button>
 
-          {/* Ctrl+B Bibbia */}
-          <button 
-            onClick={onOpenBible}
-            className="m3-chip"
-            title="Apri Bibbia del Romanzo (Personaggi, Luoghi, Intreccio) (Ctrl+B)"
-          >
-            <kbd style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.35rem', borderRadius: '3px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)', fontSize: '0.68rem' }}>Ctrl+B</kbd>
-            <span>Bibbia</span>
-          </button>
+        <div className="m3-cluster-divider" />
 
-          {/* F11 Zen */}
-          <button 
-            onClick={onToggleFullscreen}
-            className="m3-chip"
-            title="Attiva/Disattiva Schermo Intero & Modalità Zen (F11)"
-          >
-            <kbd style={{ background: 'var(--bg-primary)', padding: '0.1rem 0.35rem', borderRadius: '3px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)', fontSize: '0.68rem' }}>F11</kbd>
-            <span>Zen</span>
-          </button>
-        </div>
+        <button
+          onClick={onSaveToDisk}
+          className="m3-cluster-btn"
+          title="Salva file .bookify / JSON su PC (Ctrl+S)"
+          style={{ fontSize: '0.72rem', padding: '0.28rem 0.55rem' }}
+        >
+          <kbd style={{ background: 'var(--bg-elevated)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem', border: '1px solid var(--border-subtle)' }}>Ctrl+S</kbd>
+          <span>Salva</span>
+        </button>
+
+        <div className="m3-cluster-divider" />
+
+        <button
+          onClick={onOpenReview}
+          className="m3-cluster-btn"
+          title="Revisione Editoriale AI (Ctrl+R)"
+          style={{ fontSize: '0.72rem', padding: '0.28rem 0.55rem' }}
+        >
+          <kbd style={{ background: 'var(--bg-elevated)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem', border: '1px solid var(--border-subtle)' }}>Ctrl+R</kbd>
+        </button>
+
+        <div className="m3-cluster-divider" />
+
+        <button
+          onClick={onOpenBible}
+          className="m3-cluster-btn"
+          title="Bibbia del Romanzo (Ctrl+B)"
+          style={{ fontSize: '0.72rem', padding: '0.28rem 0.55rem' }}
+        >
+          <kbd style={{ background: 'var(--bg-elevated)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem', border: '1px solid var(--border-subtle)' }}>Ctrl+B</kbd>
+        </button>
+
+        <div className="m3-cluster-divider" />
+
+        <button
+          onClick={onToggleFullscreen}
+          className="m3-cluster-btn"
+          title="Schermo Intero / Zen Mode (F11)"
+          style={{ fontSize: '0.72rem', padding: '0.28rem 0.55rem' }}
+        >
+          <kbd style={{ background: 'var(--bg-elevated)', padding: '0.1rem 0.3rem', borderRadius: '3px', fontSize: '0.65rem', border: '1px solid var(--border-subtle)' }}>F11</kbd>
+        </button>
       </div>
     </footer>
   );

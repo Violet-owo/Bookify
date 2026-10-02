@@ -17,11 +17,14 @@ import {
   Sparkles,
   BookOpen,
   CheckCircle2,
-  Layers
+  Layers,
+  Globe,
+  ExternalLink
 } from 'lucide-react';
 import { audioEngine, KEY_PROFILES, AMBIENT_TRACKS } from '../utils/audioEngine';
 import { fetchAIWithUsage, readAIUsage } from '../utils/aiService';
 import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
+import { useI18n } from '../utils/i18n';
 
 export default function SettingsModal({
   isOpen,
@@ -33,6 +36,7 @@ export default function SettingsModal({
 }) {
   const duration = settings?.animationDurationMs || 280;
   const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, duration);
+  const { t, language } = useI18n();
 
   const [activeTab, setActiveTab] = useState('theme'); // 'theme' | 'canvas' | 'motion' | 'save' | 'audio' | 'ai'
   const [showApiKey, setShowApiKey] = useState(false);
@@ -267,61 +271,94 @@ export default function SettingsModal({
         }}
       >
         {/* Header */}
-        <div 
-          style={{
-            padding: '1.25rem 1.75rem',
-            flexShrink: 0,
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-            <Sliders size={18} style={{ color: 'var(--accent-cyan)' }} />
-            <h2 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
-              Impostazioni Studio & Personalizzazione
-            </h2>
+        <div className="m3-dialog-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <div className="m3-dialog-icon-box">
+              <Sliders size={22} className="m3-icon-bounce" />
+            </div>
+            <div>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
+                Impostazioni Studio & Personalizzazione
+              </h2>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
+                Regola palette d'autore, suoni meccanici, animazioni e parametri dell'AI Companion.
+              </p>
+            </div>
           </div>
-          <button onClick={onClose} style={{ color: 'var(--text-secondary)', padding: '0.35rem' }}>
-            <X size={20} />
-          </button>
-        </div>
-
-        {/* Navigation Tabs */}
-        <div style={{ display: 'flex', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
-          {[
-            { id: 'theme', label: 'Temi d\'Autore', icon: Palette },
-            { id: 'canvas', label: 'Foglio & Riga', icon: Square },
-            { id: 'motion', label: 'Animazioni', icon: Play },
-            { id: 'save', label: 'Salvataggio & PC', icon: HardDrive },
-            { id: 'audio', label: 'Tasti & Suoni', icon: Headphones },
-            { id: 'ai', label: 'AI Companion & Bibbia', icon: Sparkles }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeTab === tab.id;
-            return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            {/* Language Switcher Pill */}
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-primary)', padding: '0.2rem', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-subtle)' }}>
               <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                type="button"
+                onClick={() => handleChange('language', 'it')}
                 style={{
-                  flex: 1,
-                  padding: '0.85rem 0.5rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.45rem',
-                  fontSize: '0.8rem',
-                  fontWeight: isActive ? '600' : '400',
-                  color: isActive ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                  borderBottom: `2px solid ${isActive ? 'var(--accent-cyan)' : 'transparent'}`
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: 'var(--radius-full)',
+                  fontSize: '0.74rem',
+                  fontWeight: '700',
+                  backgroundColor: (settings.language || 'it') === 'it' ? 'var(--accent-cyan)' : 'transparent',
+                  color: (settings.language || 'it') === 'it' ? '#0a0a0c' : 'var(--text-secondary)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
                 }}
               >
-                <Icon size={14} />
-                <span>{tab.label}</span>
+                🇮🇹 IT
               </button>
-            );
-          })}
+              <button
+                type="button"
+                onClick={() => handleChange('language', 'en')}
+                style={{
+                  padding: '0.25rem 0.65rem',
+                  borderRadius: 'var(--radius-full)',
+                  fontSize: '0.74rem',
+                  fontWeight: '700',
+                  backgroundColor: settings.language === 'en' ? 'var(--accent-cyan)' : 'transparent',
+                  color: settings.language === 'en' ? '#0a0a0c' : 'var(--text-secondary)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                🇬🇧 EN
+              </button>
+            </div>
+
+            <button 
+              onClick={onClose} 
+              className="m3-dialog-close-btn"
+              title="Chiudi impostazioni (Esc)"
+            >
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+
+        {/* Navigation Tabs - Segmented 2x3 Grid (No Horizontal Scroll) */}
+        <div style={{ padding: '0.75rem 1.75rem', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
+          <div className="m3-segmented-grid m3-segmented-grid-3">
+            {[
+              { id: 'theme', label: 'Temi d\'Autore', icon: Palette },
+              { id: 'canvas', label: 'Foglio & Riga', icon: Square },
+              { id: 'motion', label: 'Animazioni', icon: Play },
+              { id: 'save', label: 'Salvataggio & PC', icon: HardDrive },
+              { id: 'audio', label: 'Tasti & Suoni', icon: Headphones },
+              { id: 'ai', label: 'AI Companion & Bibbia', icon: Sparkles }
+            ].map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`m3-segmented-tab ${isActive ? 'm3-segmented-tab-active' : ''}`}
+                >
+                  <Icon size={14} className="m3-icon-bounce" />
+                  <span>{tab.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -333,24 +370,24 @@ export default function SettingsModal({
                 <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '0.65rem' }}>
                   Temi d'Autore & Tavolozze Atmosferiche (12 Palette)
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.65rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
                   {THEMES.map(th => {
                     const isSelected = (settings.theme || 'parchment') === th.id;
                     return (
                       <div
                         key={th.id}
                         onClick={() => handleChange('theme', th.id)}
+                        className={`m3-card ${isSelected ? 'm3-card-active' : ''}`}
                         style={{
                           backgroundColor: th.bg,
                           border: `1.5px solid ${isSelected ? th.color : 'var(--border-subtle)'}`,
-                          borderRadius: 'var(--radius-sm)',
-                          padding: '0.8rem',
+                          borderRadius: 'var(--m3-shape-md, 16px)',
+                          padding: '0.85rem',
                           cursor: 'pointer',
                           display: 'flex',
                           flexDirection: 'column',
-                          gap: '0.3rem',
-                          boxShadow: isSelected ? `0 0 14px ${th.color}45` : 'none',
-                          transition: 'all var(--transition-fast)'
+                          gap: '0.35rem',
+                          boxShadow: isSelected ? `0 4px 18px ${th.color}35` : 'none'
                         }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -359,7 +396,7 @@ export default function SettingsModal({
                           </span>
                           <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: th.color }} />
                         </div>
-                        <span style={{ fontSize: '0.66rem', color: '#888', lineHeight: 1.3 }}>
+                        <span style={{ fontSize: '0.68rem', color: '#888', lineHeight: 1.35 }}>
                           {th.sub}
                         </span>
                       </div>
@@ -398,6 +435,58 @@ export default function SettingsModal({
                     );
                   })}
                 </div>
+              </div>
+
+              {/* Developer Portfolio Showcase Card */}
+              <div 
+                style={{
+                  padding: '1.15rem 1.35rem',
+                  borderRadius: 'var(--m3-shape-md, 16px)',
+                  backgroundColor: 'var(--bg-elevated)',
+                  border: '1px solid var(--border-subtle)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '1rem',
+                  flexWrap: 'wrap',
+                  marginTop: '0.5rem'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                  <div 
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--accent-cyan-dim)',
+                      color: 'var(--accent-cyan)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}
+                  >
+                    <Globe size={20} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      {t('settings.developerPortfolio')}
+                    </div>
+                    <p style={{ fontSize: '0.74rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
+                      Esplora altri progetti, codice sorgente e novità dal creatore di Bookify.
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={settings.developerPortfolioUrl || 'https://github.com'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="m3-btn m3-btn-tonal"
+                  style={{ textDecoration: 'none', fontSize: '0.78rem', padding: '0.5rem 1rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}
+                >
+                  <span>{t('common.portfolio')}</span>
+                  <ExternalLink size={13} />
+                </a>
               </div>
             </div>
           )}
@@ -460,6 +549,28 @@ export default function SettingsModal({
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Autohide UI Chrome during writing */}
+              <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <EyeOff size={18} style={{ color: 'var(--accent-cyan)' }} />
+                    <h3 style={{ fontSize: '0.92rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                      Dissolvenza Interfaccia durante la Scrittura
+                    </h3>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.autoHideUIOnType ?? true}
+                    onChange={(e) => handleChange('autoHideUIOnType', e.target.checked)}
+                    style={{ width: '18px', height: '18px', accentColor: 'var(--accent-cyan)', cursor: 'pointer' }}
+                  />
+                </div>
+
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                  La barra superiore e la barra inferiore restano sempre nitide e ben visibili. Solo mentre stai digitando svaniscono dolcemente per lasciarti immersione totale, e riappaiono subito quando fermi la scrittura o muovi il mouse.
+                </p>
               </div>
 
               {/* Lateral Line Counter HUD Feature */}

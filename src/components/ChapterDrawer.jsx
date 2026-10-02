@@ -122,8 +122,12 @@ export default function ChapterDrawer({
             </p>
           </div>
 
-          <button onClick={onClose} style={{ color: 'var(--text-secondary)', padding: '0.3rem' }}>
-            <X size={20} />
+          <button 
+            onClick={onClose} 
+            className="m3-dialog-close-btn"
+            title="Chiudi pannello capitoli (Esc)"
+          >
+            <X size={18} />
           </button>
         </div>
 
@@ -131,22 +135,10 @@ export default function ChapterDrawer({
         <div style={{ marginBottom: '1.25rem' }}>
           <button
             onClick={onAddChapter}
-            style={{
-              width: '100%',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.5rem',
-              padding: '0.65rem',
-              borderRadius: 'var(--radius-sm)',
-              background: 'rgba(0, 210, 211, 0.1)',
-              border: '1px solid var(--accent-cyan)',
-              color: 'var(--accent-cyan)',
-              fontWeight: '500',
-              fontSize: '0.85rem'
-            }}
+            className="m3-btn m3-btn-tonal"
+            style={{ width: '100%', padding: '0.65rem 1rem' }}
           >
-            <Plus size={16} />
+            <Plus size={16} className="m3-icon-bounce" />
             <span>Nuovo Capitolo</span>
           </button>
         </div>
@@ -158,7 +150,7 @@ export default function ChapterDrawer({
             overflowY: 'auto', 
             display: 'flex', 
             flexDirection: 'column', 
-            gap: '0.5rem',
+            gap: '0.65rem',
             paddingRight: '0.25rem' 
           }}
         >
@@ -173,27 +165,31 @@ export default function ChapterDrawer({
                   onSelectChapter(chap.id);
                   onClose();
                 }}
+                className={`m3-card ${isCurrent ? 'm3-card-active' : ''}`}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  padding: '0.8rem 1rem',
-                  borderRadius: 'var(--radius-md)',
-                  background: isCurrent ? 'var(--bg-elevated)' : 'rgba(31, 31, 56, 0.3)',
-                  border: isCurrent ? '1px solid var(--accent-cyan-dim)' : '1px solid var(--border-subtle)',
-                  cursor: 'pointer',
-                  transition: 'all var(--transition-fast)'
+                  padding: '0.85rem 1.15rem',
+                  cursor: 'pointer'
                 }}
               >
                 <div style={{ flex: 1, minWidth: 0, paddingRight: '0.5rem' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span style={{ fontSize: '0.72rem', color: isCurrent ? 'var(--accent-cyan)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                    <span 
+                      className="monkey-stat-pill"
+                      style={{ 
+                        fontSize: '0.72rem', 
+                        padding: '0.15rem 0.5rem',
+                        color: isCurrent ? 'var(--accent-cyan)' : 'var(--text-muted)'
+                      }}
+                    >
                       #{idx + 1}
                     </span>
                     <span 
                       style={{ 
-                        fontSize: '0.88rem', 
-                        fontWeight: isCurrent ? '600' : '400',
+                        fontSize: '0.9rem', 
+                        fontWeight: isCurrent ? '700' : '500',
                         color: isCurrent ? 'var(--text-primary)' : 'var(--text-secondary)',
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
@@ -203,8 +199,8 @@ export default function ChapterDrawer({
                       {chap.title || `Capitolo ${idx + 1}`}
                     </span>
                   </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
-                    {words} parole
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.25rem', paddingLeft: '0.2rem' }}>
+                    {words.toLocaleString()} parole
                   </div>
                 </div>
 
@@ -218,18 +214,13 @@ export default function ChapterDrawer({
                         }
                       }}
                       title="Elimina capitolo"
-                      style={{
-                        padding: '0.3rem',
-                        color: 'var(--text-muted)',
-                        borderRadius: 'var(--radius-sm)'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent-coral)'}
-                      onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                      className="m3-dialog-close-btn"
+                      style={{ width: '30px', height: '30px' }}
                     >
-                      <Trash2 size={14} />
+                      <Trash2 size={13} />
                     </button>
                   )}
-                  <ChevronRight size={15} style={{ color: isCurrent ? 'var(--accent-cyan)' : 'var(--text-muted)' }} />
+                  <ChevronRight size={16} style={{ color: isCurrent ? 'var(--accent-cyan)' : 'var(--text-muted)' }} />
                 </div>
               </div>
             );
@@ -237,31 +228,21 @@ export default function ChapterDrawer({
         </div>
 
         {/* Footer: Export & Download */}
-        <div style={{ marginTop: '1.5rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-subtle)' }}>
+        <div style={{ marginTop: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-subtle)' }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
             Esportazione Manoscritto
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.65rem' }}>
             <button
               onClick={() => {
                 const current = book.chapters.find(c => c.id === currentChapterId) || book.chapters[0];
                 exportChapterFile(current, book.title, 'md');
               }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.4rem',
-                padding: '0.55rem',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(31, 31, 56, 0.6)',
-                border: '1px solid var(--border-subtle)',
-                fontSize: '0.78rem',
-                color: 'var(--text-secondary)'
-              }}
+              className="m3-btn m3-btn-outlined"
+              style={{ padding: '0.55rem 0.75rem', fontSize: '0.76rem' }}
             >
-              <FileDown size={14} />
+              <FileDown size={14} className="m3-icon-bounce" />
               <span>Capitolo (.md)</span>
             </button>
 
@@ -270,43 +251,25 @@ export default function ChapterDrawer({
                 const current = book.chapters.find(c => c.id === currentChapterId) || book.chapters[0];
                 exportChapterFile(current, book.title, 'txt');
               }}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '0.4rem',
-                padding: '0.55rem',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(31, 31, 56, 0.6)',
-                border: '1px solid var(--border-subtle)',
-                fontSize: '0.78rem',
-                color: 'var(--text-secondary)'
-              }}
+              className="m3-btn m3-btn-outlined"
+              style={{ padding: '0.55rem 0.75rem', fontSize: '0.76rem' }}
             >
-              <FileText size={14} />
+              <FileText size={14} className="m3-icon-bounce" />
               <span>Capitolo (.txt)</span>
             </button>
           </div>
 
           <button
             onClick={() => exportCompleteBook(book, 'md')}
+            className="m3-btn m3-btn-tonal"
             style={{
               width: '100%',
-              marginTop: '0.6rem',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.45rem',
-              padding: '0.6rem',
-              borderRadius: 'var(--radius-sm)',
-              background: 'linear-gradient(90deg, rgba(0, 210, 211, 0.15), rgba(197, 108, 240, 0.15))',
-              border: '1px solid var(--accent-cyan-dim)',
-              fontSize: '0.8rem',
-              fontWeight: '500',
-              color: 'var(--accent-cyan)'
+              marginTop: '0.65rem',
+              padding: '0.65rem 1rem',
+              fontSize: '0.8rem'
             }}
           >
-            <Book size={14} />
+            <Book size={15} className="m3-icon-bounce" />
             <span>Scarica Libro Completo (.md)</span>
           </button>
         </div>

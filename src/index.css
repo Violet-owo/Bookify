@@ -10,6 +10,19 @@
   --radius-lg: 18px;
   --radius-full: 9999px;
 
+  /* Material 3 Expressive Tokens (Pixel / Monkeytype Fusion) */
+  --m3-shape-xs: 6px;
+  --m3-shape-sm: 10px;
+  --m3-shape-md: 16px;
+  --m3-shape-lg: 22px;
+  --m3-shape-xl: 30px;
+  --m3-shape-full: 9999px;
+
+  --m3-spring-bounce: cubic-bezier(0.34, 1.45, 0.64, 1);
+  --m3-spring-smooth: cubic-bezier(0.16, 1, 0.3, 1);
+  --m3-spring-snappy: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --m3-spring-duration: 260ms;
+
   --transition-fast: 160ms cubic-bezier(0.16, 1, 0.3, 1);
   --transition-normal: 260ms cubic-bezier(0.16, 1, 0.3, 1);
   --transition-smooth: 450ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -19,6 +32,7 @@
   --font-title: 'Cinzel', 'Lora', serif;
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Roboto Mono', monospace;
+  --font-monkey: 'JetBrains Mono', 'Roboto Mono', monospace;
 }
 
 /* ========================================================
@@ -427,14 +441,44 @@ input:focus, textarea:focus, select:focus {
   box-shadow: var(--page-shadow);
 }
 
+/* ========================================================
+   STUDIO UI VISIBILITY (Clean, Distraction-Free Writing)
+   Always fully visible when idle / paused / reading.
+   Hides seamlessly during active typing.
+   ======================================================== */
+.studio-ui,
 .ghost-ui {
-  opacity: 0.16;
+  opacity: 1;
+  transform: translateY(0);
   transition: opacity var(--transition-smooth), transform var(--transition-smooth);
+  pointer-events: auto;
 }
 
+.studio-ui.studio-ui-hidden,
+.ghost-ui.studio-ui-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+header.studio-ui.studio-ui-hidden,
+header.ghost-ui.studio-ui-hidden {
+  transform: translateY(-12px);
+}
+
+footer.studio-ui.studio-ui-hidden,
+footer.ghost-ui.studio-ui-hidden {
+  transform: translateY(12px);
+}
+
+.studio-ui:hover,
+.studio-ui-active,
+.studio-ui.studio-ui-visible,
 .ghost-ui:hover,
-.ghost-ui-active {
-  opacity: 1;
+.ghost-ui-active,
+.ghost-ui.studio-ui-visible {
+  opacity: 1 !important;
+  transform: translateY(0) !important;
+  pointer-events: auto !important;
 }
 
 /* ========================================================
@@ -616,6 +660,9 @@ input:focus, textarea:focus, select:focus {
 
 .m3-modal-backdrop {
   animation: m3BackdropFade var(--anim-duration, 280ms) var(--anim-easing) forwards;
+  background-color: rgba(0, 0, 0, 0.68) !important;
+  backdrop-filter: blur(18px) saturate(140%) !important;
+  -webkit-backdrop-filter: blur(18px) saturate(140%) !important;
 }
 
 .m3-modal-backdrop-exit {
@@ -624,8 +671,12 @@ input:focus, textarea:focus, select:focus {
 
 .m3-dialog-panel {
   animation: m3DialogEnter var(--anim-duration, 280ms) var(--anim-easing) forwards;
-  border-radius: var(--m3-shape-dialog);
+  border-radius: var(--m3-shape-xl, 28px) !important;
   transform-origin: center center;
+  border: 1px solid var(--border-subtle) !important;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  background-color: var(--bg-secondary) !important;
+  overflow: hidden;
 }
 
 .m3-dialog-panel-exit {
@@ -657,10 +708,180 @@ input:focus, textarea:focus, select:focus {
 
 .m3-drawer-panel {
   animation: m3DrawerEnter var(--anim-duration, 280ms) var(--anim-easing) forwards;
+  border-radius: 28px 0 0 28px !important;
+  border-left: 1px solid var(--border-subtle) !important;
+  box-shadow: -15px 0 50px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  background-color: var(--bg-secondary) !important;
+  overflow: hidden;
 }
 
 .m3-drawer-panel-exit {
   animation: m3DrawerExit var(--anim-duration, 280ms) var(--anim-easing) forwards !important;
+}
+
+/* Material 3 Expressive Modal Components */
+.m3-dialog-header {
+  padding: 1.25rem 1.75rem;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-card);
+}
+
+.m3-dialog-icon-box {
+  width: 42px;
+  height: 42px;
+  border-radius: var(--m3-shape-md, 16px);
+  background: var(--accent-cyan-dim);
+  color: var(--accent-cyan);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--accent-cyan-glow);
+}
+
+.m3-dialog-close-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--m3-shape-full);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 160ms var(--m3-spring-smooth);
+}
+
+.m3-dialog-close-btn:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-active);
+  transform: scale(1.06);
+}
+
+.m3-dialog-close-btn:active {
+  transform: scale(0.92);
+}
+
+/* M3 Expressive Segmented Tab Bar & Grid Systems */
+.m3-segmented-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.28rem 0.35rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-full);
+  user-select: none;
+}
+
+.m3-segmented-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-lg, 18px);
+  width: 100%;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.m3-segmented-grid {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.35rem;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-lg, 18px);
+  width: 100%;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.m3-segmented-grid-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.m3-segmented-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+@media (max-width: 680px) {
+  .m3-segmented-grid-3,
+  .m3-segmented-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.m3-segmented-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: var(--m3-shape-full);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 160ms var(--m3-spring-smooth);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.m3-segmented-cluster .m3-segmented-tab,
+.m3-segmented-grid .m3-segmented-tab {
+  border-radius: var(--m3-shape-md, 14px);
+  flex: 1 1 calc(33.333% - 0.35rem);
+  min-width: 120px;
+}
+
+.m3-segmented-tab:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.m3-segmented-tab:active {
+  transform: scale(0.96);
+}
+
+.m3-segmented-tab-active {
+  background: var(--accent-cyan-dim) !important;
+  color: var(--accent-cyan) !important;
+  font-weight: 700;
+  border: 1px solid var(--accent-cyan-glow) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Material 3 Expressive Cards inside Modals */
+.m3-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-lg, 20px);
+  padding: 1.25rem;
+  transition: all var(--m3-spring-duration) var(--m3-spring-smooth);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.m3-card:hover {
+  border-color: var(--border-active);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.m3-card-active {
+  background: var(--bg-elevated);
+  border-color: var(--accent-cyan) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 /* Material 3 Expressive Liquid Tab Switching */
@@ -813,6 +1034,105 @@ button:active .m3-icon-bounce,
 
 .m3-chip:active {
   transform: scale(0.96);
+}
+
+/* ========================================================
+   MATERIAL 3 EXPRESSIVE & MONKEYTYPE FLOATING CLUSTERS
+   Capsule Islands, Segmented Controls & Zen Stats
+   ======================================================== */
+.m3-cluster-island {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.25rem 0.35rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-full);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition: all var(--m3-spring-duration) var(--m3-spring-smooth);
+}
+
+.m3-cluster-island:hover {
+  border-color: var(--border-active);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.m3-cluster-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.36rem 0.72rem;
+  border-radius: var(--m3-shape-full);
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 160ms var(--m3-spring-smooth);
+  user-select: none;
+}
+
+.m3-cluster-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  transform: translateY(-1px);
+}
+
+.m3-cluster-btn:active {
+  transform: scale(0.94);
+  background: var(--bg-elevated);
+}
+
+.m3-cluster-btn-active {
+  background: var(--accent-cyan-dim) !important;
+  color: var(--accent-cyan) !important;
+  font-weight: 600;
+  border: 1px solid var(--accent-cyan-glow);
+}
+
+.m3-cluster-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border-subtle);
+  margin: 0 0.15rem;
+  opacity: 0.7;
+}
+
+/* Monkeytype-inspired Zen Stats Pill */
+.monkey-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.34rem 0.95rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--m3-shape-full);
+  font-family: var(--font-monkey);
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  user-select: none;
+  transition: all var(--m3-spring-duration) var(--m3-spring-smooth);
+}
+
+.monkey-stat-pill:hover {
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+
+.monkey-stat-val {
+  color: var(--accent-cyan);
+  font-weight: 700;
+}
+
+.monkey-stat-dot {
+  width: 3.5px;
+  height: 3.5px;
+  border-radius: 50%;
+  background: var(--border-subtle);
 }
 
 /* Material 3 Expressive Floating HUD for Lines */

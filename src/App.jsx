@@ -23,6 +23,7 @@ import BookshelfModal from './components/BookshelfModal';
 import NovelBibleModal from './components/NovelBibleModal';
 import BookMetadataModal from './components/BookMetadataModal';
 import confetti from 'canvas-confetti';
+import { I18nProvider } from './utils/i18n';
 
 export default function App() {
   const [library, setLibrary] = useState(loadLibrary);
@@ -53,6 +54,53 @@ export default function App() {
 
   // Autosave timer ref
   const autosaveTimerRef = useRef(null);
+
+  // Active Writing & Immersive UI Auto-Hide state
+  const [isWriting, setIsWriting] = useState(false);
+  const writingTimerRef = useRef(null);
+  const lastMousePosRef = useRef({ x: 0, y: 0 });
+
+  const isAnyModalOpen = isBookshelfOpen || isBibleOpen || isChapterDrawerOpen || isReviewModalOpen || isSettingsOpen || isBookMetadataOpen;
+
+  const handleWritingActivity = useCallback(() => {
+    if (isAnyModalOpen) return;
+    setIsWriting(true);
+    if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
+    writingTimerRef.current = setTimeout(() => {
+      setIsWriting(false);
+    }, 1600);
+  }, [isAnyModalOpen]);
+
+  // Window mouse movement reveals UI immediately
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      const dx = Math.abs(e.clientX - lastMousePosRef.current.x);
+      const dy = Math.abs(e.clientY - lastMousePosRef.current.y);
+      if (dx > 4 || dy > 4) {
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+        if (writingTimerRef.current) {
+          clearTimeout(writingTimerRef.current);
+        }
+        setIsWriting(false);
+      }
+    };
+
+    window.addEventListener('mousemove', handleMouseMove, { passive: true });
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
+    };
+  }, []);
+
+  // Ensure UI is visible whenever any modal or drawer is active
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
+      setIsWriting(false);
+    }
+  }, [isAnyModalOpen]);
+
+  const isUIWritingHidden = (settings.autoHideUIOnType ?? true) && isWriting && !isAnyModalOpen;
 
   // Current active chapter object
   const currentChapter = activeBook?.chapters?.find(c => c.id === currentChapterId) || activeBook?.chapters?.[0] || {
@@ -646,17 +694,23 @@ export default function App() {
   }, []);
 
   return (
-    <div 
-      className="bookify-app"
-      style={{
-        width: '100%',
-        height: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        position: 'relative',
-        overflow: 'hidden'
+    <I18nProvider
+      language={settings.language || 'it'}
+      onLanguageChange={(newLang) => {
+        handleToggleSetting('language', newLang);
       }}
     >
+      <div 
+        className="bookify-app"
+        style={{
+          width: '100%',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          position: 'relative',
+          overflow: 'hidden'
+        }}
+      >
       {/* Save Toast Notification */}
       {saveToast && (
         <div 
@@ -681,7 +735,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Native Desktop / Ghost TopBar */}
+      {/* Studio TopBar (Clean & Visible by default, hides gracefully while typing) */}
       <TopBar
         book={activeBook}
         currentChapter={currentChapter}
@@ -700,6 +754,7 @@ export default function App() {
         onOpenFileFromDisk={handleOpenProjectFromDisk}
         isFullscreen={isFullscreen}
         onToggleFullscreen={toggleFullscreen}
+        isWriting={isUIWritingHidden}
       />
 
       {/* Main Distraction-Free Literary Editor Area */}
@@ -714,10 +769,11 @@ export default function App() {
           onOpenBible={() => setIsBibleOpen(true)}
           onOpenSettings={() => setIsSettingsOpen(true)}
           onSaveToDisk={handleSaveToDisk}
+          onWritingActivity={handleWritingActivity}
         />
       </main>
 
-      {/* Ghost BottomBar */}
+      {/* Studio BottomBar (Clean & Visible by default, hides gracefully while typing) */}
       <BottomBar
         currentChapter={currentChapter}
         settings={settings}
@@ -728,6 +784,7 @@ export default function App() {
         onToggleFullscreen={toggleFullscreen}
         onOpenReview={() => setIsReviewModalOpen(true)}
         onOpenBible={() => setIsBibleOpen(true)}
+        isWriting={isUIWritingHidden}
       />
 
       {/* Book Metadata & Editorial Info Modal */}
@@ -799,5 +856,6 @@ export default function App() {
         }}
       />
     </div>
+    </I18nProvider>
   );
 }

@@ -1,6 +1,4 @@
-// AI Novel Bible Companion Engine for Bookify
-// Automatically extracts characters, settings/locations, and plot points from chapter text.
-import { fetchAIWithUsage } from './aiService';
+import { fetchAIWithUsage, parseJsonSafe, extractJsonFromMarkdown } from './aiService';
 
 /**
  * Auto-extract entities from current chapter text
@@ -185,7 +183,7 @@ Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 800 }
+      generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 2048 }
     })
   });
 
@@ -194,9 +192,8 @@ Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
   const raw = (data.candidates?.[0]?.content?.parts || [])
     .map(part => part.text || '')
     .join('')
-    .replace(/^```(?:json)?\s*|\s*```$/gi, '')
     .trim();
-  const parsed = JSON.parse(raw);
+  const parsed = parseJsonSafe(extractJsonFromMarkdown(raw), null);
   if (!parsed || !Array.isArray(parsed.characters) || !Array.isArray(parsed.locations)) {
     throw new Error('Gemini ha restituito una Bibbia non valida.');
   }
@@ -238,14 +235,14 @@ ${chapterContent.slice(0, 3500)}`;
       model: model || 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 800
+      max_tokens: 2048
     })
   });
 
   if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
   const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  const parsed = JSON.parse(content.replace(/```json|```/g, '').trim());
+  const content = data.choices?.[0]?.message?.content || '';
+  const parsed = parseJsonSafe(extractJsonFromMarkdown(content), null);
   if (!parsed || !Array.isArray(parsed.characters) || !Array.isArray(parsed.locations)) {
     throw new Error('Il provider AI ha restituito una Bibbia non valida.');
   }

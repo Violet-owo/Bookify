@@ -52,7 +52,7 @@ export default function NovelBibleModal({
           chapterTitle: chap.title || 'Capitolo',
           chapterContent: chap.content,
           currentBible: mergedBible,
-          settings: {}
+          settings: settings || {}
         });
         mergedBible = res.updatedBible;
         totalFound += res.newlyDiscoveredCount;
@@ -170,107 +170,83 @@ export default function NovelBibleModal({
         }}
       >
         {/* Header */}
-        <div 
-          style={{
-            padding: '1.25rem 2rem',
-            borderBottom: '1px solid var(--border-subtle)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--bg-elevated)'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <div 
-              style={{
-                width: '36px',
-                height: '36px',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'var(--accent-cyan-dim)',
-                color: 'var(--accent-cyan)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <Compass size={20} />
+        <div className="m3-dialog-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+            <div className="m3-dialog-icon-box">
+              <Compass size={22} className="m3-icon-bounce" />
             </div>
             <div>
-              <h2 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
+              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
                 Bibbia del Romanzo — {book.title}
               </h2>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
                 Personaggi, snodi di trama, timeline e appunti di ambientazione a portata di mano.
               </p>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <button
               onClick={handleAutoScanAllChapters}
               disabled={isScanningBible}
               title="Scansiona tutti i capitoli ed estrae automaticamente personaggi, luoghi e snodi"
+              className="m3-chip"
               style={{
-                padding: '0.45rem 0.95rem',
-                backgroundColor: 'var(--accent-cyan-dim)',
                 color: 'var(--accent-cyan)',
-                border: '1px solid var(--accent-cyan)',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.8rem',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                cursor: 'pointer'
+                borderColor: 'var(--accent-cyan-dim)',
+                background: 'var(--accent-cyan-dim)',
+                cursor: isScanningBible ? 'wait' : 'pointer'
               }}
             >
-              <Sparkles size={14} className={isScanningBible ? 'animate-spin' : ''} />
+              <Sparkles size={14} className={isScanningBible ? 'animate-spin' : 'm3-icon-bounce'} />
               <span>{isScanningBible ? 'Scansione Capitoli...' : 'Auto-Compila con AI'}</span>
             </button>
 
-            <button onClick={onClose} style={{ color: 'var(--text-secondary)', padding: '0.4rem' }}>
-              <X size={20} />
+            <button 
+              onClick={onClose} 
+              className="m3-dialog-close-btn"
+              title="Chiudi (Esc)"
+            >
+              <X size={18} />
             </button>
           </div>
         </div>
 
-        {/* Tab navigation */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
-          {[
-            { id: 'characters', label: 'Personaggi & Ruoli', icon: Users, count: characters.length },
-            { id: 'plot', label: 'Snodi di Trama & Suspense', icon: GitBranch, count: plotNotes.length },
-            { id: 'world', label: 'Ambientazione & Lore', icon: BookOpen },
-            { id: 'synopsis', label: 'Sinossi & Premessa', icon: FileText }
-          ].map(t => {
-            const Icon = t.icon;
-            const isActive = activeTab === t.id;
-            return (
-              <button
-                key={t.id}
-                onClick={() => setActiveTab(t.id)}
-                style={{
-                  flex: 1,
-                  padding: '0.85rem 1rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                  fontSize: '0.84rem',
-                  fontWeight: isActive ? '600' : '400',
-                  color: isActive ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                  borderBottom: `2px solid ${isActive ? 'var(--accent-cyan)' : 'transparent'}`,
-                  transition: 'all var(--transition-fast)'
-                }}
-              >
-                <Icon size={15} />
-                <span>{t.label}</span>
-                {t.count !== undefined && (
-                  <span style={{ fontSize: '0.68rem', padding: '0.1rem 0.4rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--bg-elevated)' }}>
-                    {t.count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
+        {/* Tab navigation - Segmented Grid (No Horizontal Scroll) */}
+        <div style={{ padding: '0.75rem 1.75rem', borderBottom: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-primary)' }}>
+          <div className="m3-segmented-grid m3-segmented-grid-4">
+            {[
+              { id: 'characters', label: 'Personaggi & Ruoli', icon: Users, count: characters.length },
+              { id: 'plot', label: 'Snodi di Trama & Suspense', icon: GitBranch, count: plotNotes.length },
+              { id: 'world', label: 'Ambientazione & Lore', icon: BookOpen },
+              { id: 'synopsis', label: 'Sinossi & Premessa', icon: FileText }
+            ].map(t => {
+              const Icon = t.icon;
+              const isActive = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  className={`m3-segmented-tab ${isActive ? 'm3-segmented-tab-active' : ''}`}
+                >
+                  <Icon size={14} className="m3-icon-bounce" />
+                  <span>{t.label}</span>
+                  {t.count !== undefined && (
+                    <span 
+                      style={{ 
+                        fontSize: '0.68rem', 
+                        padding: '0.1rem 0.45rem', 
+                        borderRadius: 'var(--m3-shape-full)', 
+                        backgroundColor: isActive ? 'var(--accent-cyan-glow)' : 'var(--bg-elevated)',
+                        color: isActive ? '#fff' : 'inherit'
+                      }}
+                    >
+                      {t.count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* Body Content */}
@@ -284,42 +260,31 @@ export default function NovelBibleModal({
                 </p>
                 <button
                   onClick={handleAddCharacter}
+                  className="m3-chip"
                   style={{
-                    padding: '0.45rem 0.9rem',
-                    backgroundColor: 'var(--accent-cyan-dim)',
                     color: 'var(--accent-cyan)',
-                    border: '1px solid var(--accent-cyan)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.8rem',
-                    fontWeight: '600',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
+                    background: 'var(--accent-cyan-dim)',
+                    borderColor: 'var(--accent-cyan)'
                   }}
                 >
-                  <Plus size={14} /> Aggiungi Personaggio
+                  <Plus size={14} className="m3-icon-bounce" /> <span>Aggiungi Personaggio</span>
                 </button>
               </div>
 
               {characters.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                  <Users size={36} style={{ margin: '0 auto 0.75rem auto', opacity: 0.5 }} />
-                  <p>Nessun personaggio ancora inserito. Clicca su "Aggiungi Personaggio" per iniziare.</p>
+                <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
+                  <Users size={40} style={{ margin: '0 auto 0.85rem auto', opacity: 0.4 }} />
+                  <p style={{ fontSize: '0.9rem' }}>Nessun personaggio ancora inserito. Clicca su "Aggiungi Personaggio" per iniziare.</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                   {characters.map(char => (
                     <div 
                       key={char.id}
-                      style={{
-                        backgroundColor: 'var(--bg-elevated)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
-                        padding: '1.25rem'
-                      }}
+                      className="m3-card"
                     >
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.85rem' }}>
-                        <div style={{ display: 'flex', gap: '0.75rem', flex: 1 }}>
+                        <div style={{ display: 'flex', gap: '0.75rem', flex: 1, alignItems: 'center', flexWrap: 'wrap' }}>
                           <input
                             type="text"
                             value={char.name}
@@ -330,9 +295,11 @@ export default function NovelBibleModal({
                               fontWeight: '700',
                               color: 'var(--text-primary)',
                               fontFamily: 'var(--font-serif)',
-                              padding: '0.2rem 0.5rem',
-                              borderBottom: '1px solid var(--border-subtle)',
-                              width: '45%'
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: 'var(--m3-shape-xs, 8px)',
+                              border: '1px solid var(--border-subtle)',
+                              background: 'var(--bg-primary)',
+                              minWidth: '180px'
                             }}
                           />
                           <input
@@ -343,43 +310,42 @@ export default function NovelBibleModal({
                             style={{
                               fontSize: '0.82rem',
                               color: 'var(--accent-cyan)',
-                              padding: '0.2rem 0.5rem',
-                              borderBottom: '1px solid var(--border-subtle)',
-                              flex: 1
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: 'var(--m3-shape-xs, 8px)',
+                              border: '1px solid var(--border-subtle)',
+                              background: 'var(--bg-primary)',
+                              flex: 1,
+                              minWidth: '180px'
                             }}
                           />
                           {char.isAiAutoExtracted && (
                             <span 
+                              className="m3-chip"
                               title="Personaggio estratto in automatico dal testo del tuo manoscritto"
                               style={{ 
-                                fontSize: '0.66rem', 
+                                fontSize: '0.68rem', 
                                 color: 'var(--accent-cyan)', 
-                                padding: '0.15rem 0.45rem', 
                                 backgroundColor: 'var(--accent-cyan-dim)', 
-                                borderRadius: '4px', 
-                                display: 'inline-flex', 
-                                alignItems: 'center', 
-                                gap: '0.25rem', 
-                                fontWeight: '600',
-                                whiteSpace: 'nowrap'
+                                borderColor: 'var(--accent-cyan-glow)'
                               }}
                             >
-                              <Sparkles size={11} /> AI Auto-rilevato
+                              <Sparkles size={11} className="m3-icon-bounce" /> AI Auto-rilevato
                             </span>
                           )}
                         </div>
                         <button
                           onClick={() => handleDeleteChar(char.id)}
-                          style={{ color: 'var(--text-muted)', padding: '0.3rem' }}
+                          className="m3-dialog-close-btn"
+                          style={{ width: '32px', height: '32px' }}
                           title="Elimina personaggio"
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
 
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '0.85rem' }}>
                         <div>
-                          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '0.35rem', letterSpacing: '0.04em' }}>
                             Obiettivo / Desiderio
                           </label>
                           <input
@@ -387,12 +353,12 @@ export default function NovelBibleModal({
                             value={char.goal}
                             onChange={(e) => handleUpdateChar(char.id, 'goal', e.target.value)}
                             placeholder="Cosa vuole a tutti i costi?"
-                            style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
+                            style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--m3-shape-xs, 8px)' }}
                           />
                         </div>
 
                         <div>
-                          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--accent-coral)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                          <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--accent-coral)', textTransform: 'uppercase', marginBottom: '0.35rem', letterSpacing: '0.04em' }}>
                             Punto Cieco / Difetto Fatale
                           </label>
                           <input
@@ -400,13 +366,13 @@ export default function NovelBibleModal({
                             value={char.flaw}
                             onChange={(e) => handleUpdateChar(char.id, 'flaw', e.target.value)}
                             placeholder="Cosa gli impedisce di riuscire subito?"
-                            style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)' }}
+                            style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--m3-shape-xs, 8px)' }}
                           />
                         </div>
                       </div>
 
                       <div>
-                        <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.25rem' }}>
+                        <label style={{ display: 'block', fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.35rem', letterSpacing: '0.04em' }}>
                           Note di Carattere, Voce & Aspetto
                         </label>
                         <textarea
@@ -414,7 +380,7 @@ export default function NovelBibleModal({
                           value={char.notes}
                           onChange={(e) => handleUpdateChar(char.id, 'notes', e.target.value)}
                           placeholder="Particolarità fisiche, espressioni tipiche, backstory..."
-                          style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', resize: 'vertical' }}
+                          style={{ width: '100%', padding: '0.45rem 0.65rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--m3-shape-xs, 8px)', resize: 'vertical' }}
                         />
                       </div>
                     </div>
@@ -433,20 +399,14 @@ export default function NovelBibleModal({
                 </p>
                 <button
                   onClick={handleAddPlotNote}
+                  className="m3-chip"
                   style={{
-                    padding: '0.45rem 0.9rem',
-                    backgroundColor: 'var(--accent-cyan-dim)',
                     color: 'var(--accent-cyan)',
-                    border: '1px solid var(--accent-cyan)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.8rem',
-                    fontWeight: '600',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.35rem'
+                    background: 'var(--accent-cyan-dim)',
+                    borderColor: 'var(--accent-cyan)'
                   }}
                 >
-                  <Plus size={14} /> Aggiungi Snodo
+                  <Plus size={14} className="m3-icon-bounce" /> <span>Aggiungi Snodo</span>
                 </button>
               </div>
 
@@ -454,24 +414,19 @@ export default function NovelBibleModal({
                 {plotNotes.map((plot, idx) => (
                   <div
                     key={plot.id}
+                    className="m3-card"
                     style={{
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '1.2rem',
                       display: 'flex',
                       gap: '1rem',
                       alignItems: 'flex-start'
                     }}
                   >
                     <div 
+                      className="monkey-stat-pill"
                       style={{
-                        padding: '0.3rem 0.6rem',
-                        borderRadius: 'var(--radius-xs)',
-                        backgroundColor: 'var(--bg-primary)',
+                        padding: '0.25rem 0.6rem',
                         color: 'var(--accent-cyan)',
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '0.82rem',
+                        fontSize: '0.8rem',
                         fontWeight: '700'
                       }}
                     >
@@ -479,7 +434,7 @@ export default function NovelBibleModal({
                     </div>
 
                     <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem', gap: '0.75rem', flexWrap: 'wrap' }}>
                         <input
                           type="text"
                           value={plot.title}
@@ -489,9 +444,12 @@ export default function NovelBibleModal({
                             fontSize: '0.95rem',
                             fontWeight: '600',
                             color: 'var(--text-primary)',
-                            borderBottom: '1px solid var(--border-subtle)',
-                            width: '60%',
-                            padding: '0.2rem 0.4rem'
+                            padding: '0.35rem 0.65rem',
+                            borderRadius: 'var(--m3-shape-xs, 8px)',
+                            border: '1px solid var(--border-subtle)',
+                            background: 'var(--bg-primary)',
+                            flex: 1,
+                            minWidth: '180px'
                           }}
                         />
 
@@ -501,7 +459,8 @@ export default function NovelBibleModal({
                             onChange={(e) => handleUpdatePlot(plot.id, 'tensionLevel', e.target.value)}
                             style={{
                               fontSize: '0.75rem',
-                              padding: '0.25rem 0.5rem',
+                              padding: '0.35rem 0.65rem',
+                              borderRadius: 'var(--m3-shape-xs, 8px)',
                               backgroundColor: 'var(--bg-primary)',
                               color: plot.tensionLevel === 'Altissima' ? 'var(--accent-coral)' : 'var(--accent-cyan)'
                             }}
@@ -513,9 +472,11 @@ export default function NovelBibleModal({
 
                           <button
                             onClick={() => handleDeletePlot(plot.id)}
-                            style={{ color: 'var(--text-muted)' }}
+                            className="m3-dialog-close-btn"
+                            style={{ width: '32px', height: '32px' }}
+                            title="Elimina snodo"
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={14} />
                           </button>
                         </div>
                       </div>
@@ -525,7 +486,7 @@ export default function NovelBibleModal({
                         value={plot.summary}
                         onChange={(e) => handleUpdatePlot(plot.id, 'summary', e.target.value)}
                         placeholder="Cosa accade ai personaggi in questo momento?"
-                        style={{ width: '100%', padding: '0.5rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', resize: 'vertical' }}
+                        style={{ width: '100%', padding: '0.55rem 0.75rem', fontSize: '0.82rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--m3-shape-xs, 8px)', resize: 'vertical' }}
                       />
                     </div>
                   </div>
@@ -550,12 +511,12 @@ export default function NovelBibleModal({
                 placeholder="Descrivi l'ambientazione: le luci, gli odori, le città, i codici da decifrare, le fazioni in lotta..."
                 style={{
                   width: '100%',
-                  padding: '1rem',
+                  padding: '1.25rem',
                   fontSize: '0.88rem',
                   lineHeight: 1.7,
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)'
+                  borderRadius: 'var(--m3-shape-lg, 20px)'
                 }}
               />
             </div>
@@ -577,12 +538,12 @@ export default function NovelBibleModal({
                 placeholder="Scrivi qui la sinossi completa o il pitch del libro..."
                 style={{
                   width: '100%',
-                  padding: '1rem',
+                  padding: '1.25rem',
                   fontSize: '0.88rem',
                   lineHeight: 1.7,
                   backgroundColor: 'var(--bg-elevated)',
                   border: '1px solid var(--border-subtle)',
-                  borderRadius: 'var(--radius-md)'
+                  borderRadius: 'var(--m3-shape-lg, 20px)'
                 }}
               />
             </div>
@@ -608,14 +569,7 @@ export default function NovelBibleModal({
               handleSave();
               onClose();
             }}
-            style={{
-              padding: '0.45rem 1.25rem',
-              backgroundColor: 'var(--accent-cyan)',
-              color: '#1a1612',
-              fontWeight: '600',
-              fontSize: '0.82rem',
-              borderRadius: 'var(--radius-sm)'
-            }}
+            className="m3-btn m3-btn-filled"
           >
             Chiudi e Torna al Capitolo
           </button>
