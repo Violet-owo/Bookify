@@ -15,6 +15,7 @@ and an AI literary editor powered by Claude, Gemini, OpenAI or a local Ollama mo
 [![Linux](https://img.shields.io/badge/Linux-AppImage%20%7C%20deb%20%7C%20rpm-FCC624?style=flat-square&logo=linux&logoColor=black)](https://github.com/Violet-owo/Bookify/releases)
 [![Claude](https://img.shields.io/badge/AI-Claude%20%7C%20Gemini%20%7C%20OpenAI%20%7C%20Ollama-D97757?style=flat-square)](#-ai-editor)
 [![IT | EN](https://img.shields.io/badge/UI-Italiano%20%7C%20English-F2706B?style=flat-square)](#-features)
+[![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-D97757?style=flat-square&logo=anthropic&logoColor=white)](#-built-with-claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-6C4BFF?style=flat-square)](LICENSE)
 
 [**Download**](https://github.com/Violet-owo/Bookify/releases) · [Features](#-features) · [Screenshots](#-a-closer-look) · [AI editor](#-ai-editor) · [Build](#-build-from-source) · [Author](#-author)
@@ -194,6 +195,13 @@ Pushing a tag such as `v1.0.1` runs the [Release workflow](.github/workflows/rel
 - [ ] DOCX and ePub export
 - [x] Linux builds (AppImage, deb, rpm)
 - [ ] Signed installers and macOS builds
+
+## 🤖 Built with Claude Code
+
+[Claude Code](https://claude.com/claude-code), Anthropic's agentic coding tool, helped test and publish Bookify:
+
+- **Testing:** running the app, checking features and the UI across themes and window sizes, and finding and fixing bugs.
+- **Publishing:** preparing the builds, the GitHub Actions release workflow, the release packages and this README.
 
 ## 👩‍💻 Author
 
