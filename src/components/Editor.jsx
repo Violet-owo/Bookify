@@ -1,569 +1,417 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import { audioEngine } from '../utils/audioEngine';
 import { checkTextChunk, enhanceParagraph, rewriteSuggestion, buildNovelContext } from '../utils/aiService';
 import { extractBibleEntities } from '../utils/bibleCompanion';
 import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
-import DiffViewer from './DiffViewer';
-import AiCircleLoader from './AiCircleLoader';
-import { 
-  Sparkles, 
-  Check, 
-  X, 
-  ArrowRight, 
-  Flame, 
-  EyeOff, 
-  MessageSquare, 
-  RefreshCw,
-  BookOpen,
-  Wand2,
-  Feather,
-  CheckCheck,
-  FileCheck
+import { useI18n } from '../utils/i18n';
+import { useFeedback } from './Feedback';
+import RewriteReviewDialog from './RewriteReviewDialog';
+import {
+  Sparkles,
+  Check,
+  X,
+  ArrowRight,
+  Flame,
+  EyeOff,
+  MessageSquare,
+  RefreshCw
 } from 'lucide-react';
 
-export default function Editor({
+const EDITOR_WIDTHS = { compact: 700, standard: 840, wide: 980 };
+const LETTER = /^[a-zA-ZàèéìòùÀÈÉÌÒÙ]$/;
+const LOWER_LETTER = /^[a-zàèéìòù]$/;
+
+/** Typographic conventions per language. */
+function typography(language) {
+  return language === 'en'
+    ? { open: '“', close: '”', dash: '—', dialogueDash: '— ' }
+    : { open: '«', close: '»', dash: '— ', dialogueDash: '— ' };
+}
+
+/** Publication-grade clean-up of a manuscript (dialogue dashes, quotes, spacing, ellipses...). */
+export function formatManuscript(rawText, language = 'it') {
+  if (!rawText) return rawText;
+  const { open, close } = typography(language);
+  let res = rawText.replace(/\r\n/g, '\n');
+  res = res.replace(/^([\t ]*)[-–—]+[\t ]*(?=\S)/gm, '$1— ');             // dialogue dashes
+  res = res.replace(/[^\S\r\n]{2,}(?=\S)/g, (m, offset, str) => (str[offset - 1] === '\n' || offset === 0 ? m : ' ')); // collapse inner spaces, keep indents
+  res = res.replace(/[ \t]+([,.;:!?…»”)\]}])/g, '$1');                    // no space before punctuation
+  res = res.replace(/\.{3}/g, '…');                                       // typographic ellipsis
+  res = res.replace(/([,;!?…])([A-Za-zàèéìòùÀÈÉÌÒÙ«“—])/g, '$1 $2');     // space after punctuation
+  res = res.replace(/([a-zA-ZàèéìòùÀÈÉÌÒÙ])'([a-zA-ZàèéìòùÀÈÉÌÒÙ])/g, '$1’$2');
+  res = res.replace(/\b(po|fa|da|di|un|qual)'(?=\s|$)/gi, '$1’');
+  res = res.replace(/"([^"\n]+)"/g, `${open}$1${close}`);
+  res = res.replace(/([.!?…]\s+)([a-zàèéìòù])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  res = res.replace(/(—\s+)([a-zàèéìòù])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  res = res.replace(/[ \t]+$/gm, '');
+  return res;
+}
+
+const Editor = forwardRef(function Editor({
   chapter,
   onUpdateContent,
   settings,
   book,
   onUpdateBible,
-  onOpenReview,
-  onOpenBible,
-  onOpenSettings,
-  onSaveToDisk,
-  onWritingActivity
-}) {
+  onWritingActivity,
+  onCursorChange,
+  onRefiningChange,
+  isWriting = false
+}, ref) {
+  const { t, language } = useI18n();
+  const { notify } = useFeedback();
   const textareaRef = useRef(null);
   const containerRef = useRef(null);
   const mirrorRef = useRef(null);
 
-  // Suggestions from Chunk Checking
+  // Real-time companion suggestions
   const [activeSuggestions, setActiveSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(null);
   const [suggestionReview, setSuggestionReview] = useState(null);
   const [isCheckingChunk, setIsCheckingChunk] = useState(false);
-  const [isCompanionExpanded, setIsCompanionExpanded] = useState(false);
-  const [bibleToast, setBibleToast] = useState(null);
-  const [editorialToast, setEditorialToast] = useState(null);
 
-  // Selection AI floating menu
+  // Selection AI popup
   const [selectionRange, setSelectionRange] = useState(null);
+  const [closingSelectionRange, setClosingSelectionRange] = useState(null);
   const [isChapterRefinementActive, setIsChapterRefinementActive] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [enhancementElapsedSeconds, setEnhancementElapsedSeconds] = useState(0);
   const [enhancedResult, setEnhancedResult] = useState(null);
   const [enhancementError, setEnhancementError] = useState(null);
   const enhancementAbortControllerRef = useRef(null);
-  const [closingSelectionRange, setClosingSelectionRange] = useState(null);
-  const selectionAnimationDuration = settings.enableAnimations !== false
-    ? Number(settings.animationDurationMs) || 220
-    : 0;
+  const selectionAnimationDuration = settings.enableAnimations !== false ? Number(settings.animationDurationMs) || 220 : 0;
   const { shouldRender: shouldShowSelectionPopup, isExiting: isSelectionPopupExiting } = useAnimatedVisibility(
     Boolean(selectionRange),
     selectionAnimationDuration
   );
 
-  useEffect(() => {
-    if (!isEnhancing) return undefined;
-    const startedAt = Date.now();
-    const timer = setInterval(() => {
-      setEnhancementElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [isEnhancing]);
-
-  // Active Typing Focus & Blur state
+  // Typing focus blur
   const [isTypingFocusActive, setIsTypingFocusActive] = useState(false);
   const typingIdleTimerRef = useRef(null);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
 
-  // Tracking enter presses and typing state
   const consecutiveEntersRef = useRef(0);
   const chunkTypingTimerRef = useRef(null);
-  const lastChunkHashRef = useRef('');
 
-  // Cursor tracking for typewriter scroll and live Line HUD
   const [cursorLine, setCursorLine] = useState(1);
   const [totalLines, setTotalLines] = useState(1);
 
-  // Precise Caret Coordinates calculation using invisible mirror
+  // The status bar shows the caret line
+  useEffect(() => {
+    onCursorChange?.({ line: cursorLine, total: totalLines });
+  }, [cursorLine, totalLines, onCursorChange]);
+
+  useEffect(() => {
+    if (!isEnhancing) return undefined;
+    const startedAt = Date.now();
+    const timer = setInterval(() => setEnhancementElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isEnhancing]);
+
+  // Suggestions belong to a chapter: clear them when switching
+  useEffect(() => {
+    setActiveSuggestions([]);
+    setSelectedSuggestion(null);
+    setSelectionRange(null);
+    setEnhancedResult(null);
+    setEnhancementError(null);
+  }, [chapter?.id]);
+
+  // ---------------------------------------------------------------------------
+  // Caret measurement (invisible mirror) for typewriter scrolling and the line HUD
+  // ---------------------------------------------------------------------------
   const getCaretOffset = useCallback(() => {
     const textarea = textareaRef.current;
     const mirror = mirrorRef.current;
     if (!textarea || !mirror) return { top: 0, height: 38, totalHeight: 400 };
-
-    if (textarea.clientWidth > 0) {
-      mirror.style.width = `${textarea.clientWidth}px`;
-    }
+    if (textarea.clientWidth > 0) mirror.style.width = `${textarea.clientWidth}px`;
 
     const { selectionStart } = textarea;
     const text = textarea.value || '';
-    const textBefore = text.slice(0, selectionStart);
-    const textAfter = text.slice(selectionStart);
-
     mirror.textContent = '';
-    const preNode = document.createTextNode(textBefore);
     const marker = document.createElement('span');
     marker.textContent = '|';
     marker.style.display = 'inline-block';
     marker.style.width = '0px';
-    const postNode = document.createTextNode(textAfter);
-
-    mirror.appendChild(preNode);
+    mirror.appendChild(document.createTextNode(text.slice(0, selectionStart)));
     mirror.appendChild(marker);
-    mirror.appendChild(postNode);
+    mirror.appendChild(document.createTextNode(text.slice(selectionStart)));
 
-    const markerTop = marker.offsetTop;
-    const markerHeight = marker.offsetHeight || 38;
-    const totalHeight = mirror.offsetHeight || mirror.scrollHeight || 400;
-    return { top: markerTop, height: markerHeight, totalHeight };
+    return {
+      top: marker.offsetTop,
+      height: marker.offsetHeight || 38,
+      totalHeight: mirror.offsetHeight || mirror.scrollHeight || 400
+    };
   }, []);
 
-  // Calculate exact cursor line and total lines (supporting real visual wrapped lines)
+  const fontSize = Number(settings.fontSize) || 19;
+  const lineHeightRatio = Number(settings.lineHeight) || 2.1;
+  const hudCountMode = settings.lineHUDCountMode;
+
   const updateLineNumbers = useCallback(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
     const text = textarea.value || '';
-    const selStart = textarea.selectionStart ?? 0;
-    const textBefore = text.slice(0, selStart);
-    const curParagraph = textBefore.split('\n').length;
-    const allParagraphs = Math.max(1, text.split('\n').length);
-
-    // Calculate real visual wrapped lines from caret vertical coordinate in mirror
-    const { top: caretTop, totalHeight } = getCaretOffset();
-    const fontSize = Number(settings?.fontSize) || 19;
-    const lineHeightRatio = Number(settings?.lineHeight) || 2.1;
-    const singleLinePx = Math.max(22, Math.round(fontSize * lineHeightRatio));
-
-    const visualCurLine = Math.max(1, Math.floor(caretTop / singleLinePx) + 1);
-    const visualTotalLines = Math.max(visualCurLine, Math.floor(totalHeight / singleLinePx) + 1);
-
-    if (settings?.lineHUDCountMode === 'paragraphs') {
-      setTotalLines(allParagraphs);
-    } else {
-      setCursorLine(visualCurLine);
-      setTotalLines(visualTotalLines);
+    if (hudCountMode === 'paragraphs') {
+      const selStart = textarea.selectionStart ?? 0;
+      setCursorLine(text.slice(0, selStart).split('\n').length);
+      setTotalLines(Math.max(1, text.split('\n').length));
+      return;
     }
-  }, [getCaretOffset, settings?.fontSize, settings?.lineHeight, settings?.lineHUDCountMode]);
+    const { top: caretTop, totalHeight } = getCaretOffset();
+    const singleLinePx = Math.max(22, Math.round(fontSize * lineHeightRatio));
+    const visualCurLine = Math.max(1, Math.floor(caretTop / singleLinePx) + 1);
+    setCursorLine(visualCurLine);
+    setTotalLines(Math.max(visualCurLine, Math.round(totalHeight / singleLinePx)));
+  }, [getCaretOffset, fontSize, lineHeightRatio, hudCountMode]);
 
   useEffect(() => {
     updateLineNumbers();
   }, [chapter?.content, updateLineNumbers]);
 
-  // Center active line in container with zero bounce
+  const typewriterMode = settings.typewriterMode;
   const centerActiveLine = useCallback((smooth = false) => {
-    if (!textareaRef.current || !containerRef.current) return;
     const textarea = textareaRef.current;
     const container = containerRef.current;
+    if (!textarea || !container) return;
 
     const { top: caretTop, height: caretHeight, totalHeight } = getCaretOffset();
-
-    // Adjust height from mirror WITHOUT resetting to 'auto'
     if (totalHeight) {
       const desiredHeight = Math.max(500, totalHeight + 100);
-      if (Math.abs(textarea.offsetHeight - desiredHeight) > 15) {
-        textarea.style.height = `${desiredHeight}px`;
-      }
+      if (Math.abs(textarea.offsetHeight - desiredHeight) > 15) textarea.style.height = `${desiredHeight}px`;
     }
+    if (!typewriterMode) return;
 
-    if (!settings.typewriterMode) return;
-
-    // Calculate exact caret Y coordinate relative to container's visible viewport
     const containerRect = container.getBoundingClientRect();
     const textareaRect = textarea.getBoundingClientRect();
-
-    const caretCurrentViewportY = (textareaRect.top - containerRect.top) + caretTop;
-    const targetViewportY = (container.clientHeight / 2) - (caretHeight / 2);
-    const deltaScroll = caretCurrentViewportY - targetViewportY;
-
-    if (Math.abs(deltaScroll) > 1) {
-      if (smooth) {
-        container.scrollTo({
-          top: Math.max(0, container.scrollTop + deltaScroll),
-          behavior: 'smooth'
-        });
-      } else {
-        container.scrollTop = Math.max(0, container.scrollTop + deltaScroll);
-      }
+    const caretViewportY = (textareaRect.top - containerRect.top) + caretTop;
+    const delta = caretViewportY - ((container.clientHeight / 2) - (caretHeight / 2));
+    if (Math.abs(delta) > 1) {
+      const top = Math.max(0, container.scrollTop + delta);
+      if (smooth) container.scrollTo({ top, behavior: 'smooth' });
+      else container.scrollTop = top;
     }
-  }, [settings.typewriterMode, getCaretOffset]);
+  }, [typewriterMode, getCaretOffset]);
 
-  // Publication-grade formatting helper for Italian & International literature
-  const formatManuscriptPublicationStandards = (rawText) => {
-    if (!rawText) return rawText;
-    let res = rawText;
-    
-    // 1. Normalize line endings
-    res = res.replace(/\r\n/g, '\n');
-    
-    // 2. Dialogue dashes: lines starting with '-' or '--' become literary em-dash '— '
-    res = res.replace(/^[\t ]*[-–—]+[\t ]*/gm, '— ');
-    
-    // 3. Remove multiple spaces (excluding newlines)
-    res = res.replace(/[^\S\r\n]{2,}/g, ' ');
-    
-    // 4. Remove space before punctuation: , . ! ? ; : … » ” ) ] }
-    res = res.replace(/[ \t]+([,.;:!?…»”)\]}])/g, '$1');
-    
-    // 5. Ensure single space after punctuation: , . ! ? ; : … when followed by word or quote
-    res = res.replace(/([,.;:!?…])([A-Za-z0-9àèéìòùÀÈÉÌÒÙ«“—])/g, '$1 $2');
-    
-    // 6. Typographic ellipses: replace three consecutive dots with …
-    res = res.replace(/\.{3}/g, '…');
-    
-    // 7. Typographic apostrophe: replace straight single quote ' with ’
-    res = res.replace(/([a-zA-ZàèéìòùÀÈÉÌÒÙ])'([a-zA-ZàèéìòùÀÈÉÌÒÙ])/g, '$1’$2');
-    res = res.replace(/\b(po|fa|da|di|un|qual)'\b/gi, '$1’');
-    
-    // 8. Convert straight quotes "..." to publication guillemets «...»
-    res = res.replace(/"([^"\n]+)"/g, '«$1»');
-    
-    // 9. Capitalize first letter after sentence-ending punctuation (. ! ?)
-    res = res.replace(/([.!?]\s+)([a-zàèéìòù])/g, (m, p1, p2) => p1 + p2.toUpperCase());
-    
-    // 10. Capitalize after dialogue dash: '— a...' -> '— A...'
-    res = res.replace(/(—\s+)([a-zàèéìòù])/g, (m, p1, p2) => p1 + p2.toUpperCase());
+  useEffect(() => {
+    centerActiveLine(true);
+  }, [chapter?.id, centerActiveLine]);
 
-    // 11. Clean trailing whitespace on lines
-    res = res.replace(/[ \t]+$/gm, '');
+  // ---------------------------------------------------------------------------
+  // Text mutations that keep the native undo history (Ctrl+Z / Ctrl+Y)
+  // ---------------------------------------------------------------------------
+  const replaceRange = useCallback((start, end, text) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    textarea.setSelectionRange(start, end);
+    const ok = text === ''
+      ? document.execCommand('delete', false)
+      : document.execCommand('insertText', false, text);
+    if (!ok) {
+      // Fallback (no undo entry, but never lose the edit)
+      textarea.setRangeText(text, start, end, 'end');
+      onUpdateContent(textarea.value);
+    }
+  }, [onUpdateContent]);
 
-    return res;
-  };
+  const replaceWholeText = useCallback((text) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    replaceRange(0, textarea.value.length, text);
+  }, [replaceRange]);
 
   const handleFormatForPublication = () => {
-    if (!textareaRef.current) return;
-    const current = textareaRef.current.value || '';
+    const current = textareaRef.current?.value || '';
     if (!current.trim()) return;
-
-    const formatted = formatManuscriptPublicationStandards(current);
+    const formatted = formatManuscript(current, language);
     if (formatted !== current) {
-      onUpdateContent(formatted);
-      setEditorialToast('✨ Manoscritto rifinito secondo gli standard tipografici ed editoriali!');
+      const caret = textareaRef.current.selectionStart;
+      replaceWholeText(formatted);
+      textareaRef.current.setSelectionRange(Math.min(caret, formatted.length), Math.min(caret, formatted.length));
+      notify(t('editor.formatDone'), { tone: 'success' });
     } else {
-      setEditorialToast('✓ Il manoscritto è già perfettamente formattato per la pubblicazione!');
+      notify(t('editor.formatAlready'), { tone: 'info' });
     }
-    setTimeout(() => setEditorialToast(null), 4000);
   };
 
-  // Play audio and activate Typing Focus
+  // ---------------------------------------------------------------------------
+  // Keyboard: sounds, typing focus, smart typography
+  // ---------------------------------------------------------------------------
   const handleKeyDown = (e) => {
+    // Only real typing (not Esc, arrows or shortcuts) enters the immersive mode
+    const isTyping = !e.ctrlKey && !e.altKey && !e.metaKey
+      && (e.key.length === 1 || ['Enter', 'Backspace', 'Delete', 'Tab'].includes(e.key));
     audioEngine.playKey(e.key, e.code);
-    if (onWritingActivity) onWritingActivity();
+    if (isTyping) onWritingActivity?.();
 
-    // Trigger Active Line Focus while typing
-    if (settings.lineFocusBlur) {
+    if (settings.lineFocusBlur && isTyping) {
       setIsTypingFocusActive(true);
-      if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
-      typingIdleTimerRef.current = setTimeout(() => {
-        setIsTypingFocusActive(false);
-      }, 1500);
+      clearTimeout(typingIdleTimerRef.current);
+      typingIdleTimerRef.current = setTimeout(() => setIsTypingFocusActive(false), 1500);
     }
 
     const textarea = textareaRef.current;
-    if (!textarea) return;
-
+    if (!textarea || e.nativeEvent.isComposing) return;
     const { selectionStart, selectionEnd, value } = textarea;
     const textBefore = value.slice(0, selectionStart);
-    const textAfter = value.slice(selectionEnd);
     const currentLine = textBefore.split('\n').pop() || '';
+    const lineStart = selectionStart - currentLine.length;
+    const hasModifier = e.ctrlKey || e.altKey || e.metaKey;
+    const typo = typography(language);
 
-    // ============================================================
-    // 1. AUTONOMOUS INDENTATION & DIALOGUE CONTINUATION (Enter)
-    // ============================================================
-    if (e.key === 'Enter') {
+    // 1. Enter: dialogue continuation & editorial paragraph indent
+    if (e.key === 'Enter' && !hasModifier) {
       consecutiveEntersRef.current += 1;
       if (consecutiveEntersRef.current >= 3 && settings.chunkCheckingEnabled) {
         triggerChunkCheck();
         consecutiveEntersRef.current = 0;
       }
+      if (e.shiftKey) return;
 
-      // Dialogue continuation: if the current line was a dialogue line
-      const isDialogueLine = /^\s*([—–-]|«)/.test(currentLine);
-      const isDialogueOnly = /^\s*([—–-]\s*|«\s*)$/.test(currentLine);
+      const dialogueOpener = currentLine.match(/^\s*([—–-]\s*|«|“)/)?.[1];
+      const isDialogueOnly = /^\s*([—–-]\s*|«\s*|“\s*)$/.test(currentLine);
 
       if (isDialogueOnly) {
-        // If author presses enter on an empty dialogue dash, cancel dialogue to return to narrative
         e.preventDefault();
-        const startOfLine = selectionStart - currentLine.length;
-        const newText = value.slice(0, startOfLine) + '\n' + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = startOfLine + 1;
-          updateLineNumbers();
-          centerActiveLine(false);
-        }, 0);
+        replaceRange(lineStart, selectionEnd, '\n');
         return;
       }
-
-      if (isDialogueLine) {
-        // Autonomously continue next dialogue line
+      if (dialogueOpener && selectionStart === selectionEnd) {
         e.preventDefault();
-        const insert = '\n— ';
-        const newText = textBefore + insert + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + insert.length;
-          updateLineNumbers();
-          centerActiveLine(false);
-        }, 0);
+        const opener = /[—–-]/.test(dialogueOpener) ? typo.dialogueDash : dialogueOpener.trim();
+        replaceRange(selectionStart, selectionEnd, `\n${opener}`);
         return;
       }
-
-      // Editorial Paragraph Indentation (Capoverso da libro stampato)
-      if (settings.editorialIndent && !e.shiftKey) {
-        // If the author is already on an empty indented line, clear indent so they can exit paragraph
+      if (settings.editorialIndent) {
+        e.preventDefault();
         if (/^\s{4,}$/.test(currentLine)) {
-          e.preventDefault();
-          const startOfLine = selectionStart - currentLine.length;
-          const newText = value.slice(0, startOfLine) + '\n' + textAfter;
-          onUpdateContent(newText);
-          setTimeout(() => {
-            textarea.selectionStart = textarea.selectionEnd = startOfLine + 1;
-            updateLineNumbers();
-            centerActiveLine(false);
-          }, 0);
-          return;
+          replaceRange(lineStart, selectionEnd, '\n');
+        } else {
+          replaceRange(selectionStart, selectionEnd, '\n    ');
         }
-
-        // Auto-indent new paragraph with 4 spaces
-        e.preventDefault();
-        const insert = '\n    ';
-        const newText = textBefore + insert + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + insert.length;
-          updateLineNumbers();
-          centerActiveLine(false);
-        }, 0);
         return;
       }
-    } else if (e.key !== 'Shift' && e.key !== 'Control' && e.key !== 'Alt') {
-      consecutiveEntersRef.current = 0;
+      return;
     }
+    if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) consecutiveEntersRef.current = 0;
 
-    // ============================================================
-    // 2. TAB & SHIFT+TAB (Literary Indentation)
-    // ============================================================
-    if (e.key === 'Tab') {
+    // 2. Tab / Shift+Tab: literary indentation
+    if (e.key === 'Tab' && !hasModifier) {
       e.preventDefault();
       if (e.shiftKey) {
-        // Unindent current line by up to 4 spaces
-        const match = currentLine.match(/^(\s{1,4})/);
-        if (match) {
-          const removed = match[1].length;
-          const lineStartIdx = selectionStart - currentLine.length;
-          const newText = value.slice(0, lineStartIdx) + currentLine.slice(removed) + textAfter;
-          onUpdateContent(newText);
-          setTimeout(() => {
-            textarea.selectionStart = textarea.selectionEnd = Math.max(lineStartIdx, selectionStart - removed);
-            updateLineNumbers();
-          }, 0);
+        const removed = currentLine.match(/^( {1,4}|\t)/)?.[1].length || 0;
+        if (removed) {
+          replaceRange(lineStart, lineStart + removed, '');
+          const caret = Math.max(lineStart, selectionStart - removed);
+          textarea.setSelectionRange(caret, caret);
         }
       } else {
-        // Insert 4-space editorial indent
-        const insert = '    ';
-        const newText = textBefore + insert + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + insert.length;
-          updateLineNumbers();
-        }, 0);
+        replaceRange(selectionStart, selectionEnd, '    ');
       }
       return;
     }
 
-    // ============================================================
-    // 3. SMART PUNCTUATION & TYPOGRAPHY
-    // ============================================================
-    if (settings.smartPunctuation !== false && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      // A. Em-Dash: '--' becomes '—'
-      if (e.key === '-' && selectionStart > 0 && value[selectionStart - 1] === '-') {
+    // 3. Smart punctuation & typography
+    if (settings.smartPunctuation !== false && !hasModifier && selectionStart === selectionEnd) {
+      const prevChar = value[selectionStart - 1] || '';
+
+      if (e.key === '-' && prevChar === '-') {
         e.preventDefault();
-        const newText = value.slice(0, selectionStart - 1) + '— ' + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
-          updateLineNumbers();
-        }, 0);
+        replaceRange(selectionStart - 1, selectionStart, typo.dash);
         return;
       }
-
-      // B. Ellipsis: '..' followed by '.' becomes '…'
-      if (e.key === '.' && selectionStart >= 2 && value.slice(selectionStart - 2, selectionStart) === '..') {
+      if (e.key === '.' && value.slice(selectionStart - 2, selectionStart) === '..') {
         e.preventDefault();
-        const newText = value.slice(0, selectionStart - 2) + '… ' + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart;
-          updateLineNumbers();
-        }, 0);
+        replaceRange(selectionStart - 2, selectionStart, '…');
         return;
       }
-
-      // C. Typographic Dialogue Quotes: '"' becomes '« ' or ' »'
       if (e.key === '"') {
         e.preventDefault();
-        const prevChar = selectionStart > 0 ? value[selectionStart - 1] : '';
-        const isOpening = !prevChar || /\s|[\n(\[{]/.test(prevChar);
-        const quoteChar = isOpening ? '«' : '»';
-        const newText = textBefore + quoteChar + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
-          updateLineNumbers();
-        }, 0);
+        const isOpening = !prevChar || /[\s([{—–-]/.test(prevChar);
+        replaceRange(selectionStart, selectionEnd, isOpening ? typo.open : typo.close);
         return;
       }
-
-      // D. Typographic Apostrophe: "'" becomes '’'
       if (e.key === "'") {
         e.preventDefault();
-        const newText = textBefore + '’' + textAfter;
-        onUpdateContent(newText);
-        setTimeout(() => {
-          textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
-          updateLineNumbers();
-        }, 0);
+        replaceRange(selectionStart, selectionEnd, '’');
         return;
       }
 
-      // E. Auto-Spacing after punctuation: if user types a letter directly after ,;:!?
-      if (e.key.length === 1 && /^[a-zA-ZàèéìòùÀÈÉÌÒÙ]$/.test(e.key)) {
-        const prevChar = selectionStart > 0 ? value[selectionStart - 1] : '';
-        if (['.', '!', '?', ',', ';', ':', '…'].includes(prevChar)) {
+      if (LETTER.test(e.key)) {
+        // Missing space after , ; ! ? … : (never after "." — file.txt, www.site, p.es.)
+        const isUrlColon = prevChar === ':' && /https?$/i.test(textBefore.slice(0, -1));
+        if ([',', ';', '!', '?', '…', ':'].includes(prevChar) && !isUrlColon) {
           e.preventDefault();
-          const isSentenceEnd = ['.', '!', '?', '…'].includes(prevChar);
-          const charToInsert = isSentenceEnd ? e.key.toUpperCase() : e.key;
-          const insert = ' ' + charToInsert;
-          const newText = textBefore + insert + textAfter;
-          onUpdateContent(newText);
-          setTimeout(() => {
-            textarea.selectionStart = textarea.selectionEnd = selectionStart + insert.length;
-            updateLineNumbers();
-            centerActiveLine(false);
-          }, 0);
+          const upper = ['!', '?', '…'].includes(prevChar) && LOWER_LETTER.test(e.key);
+          replaceRange(selectionStart, selectionEnd, ` ${upper ? e.key.toUpperCase() : e.key}`);
           return;
         }
 
-        // F. Auto-Capitalization: at start of line, paragraph, or after sentence end (. ! ? … \n — «)
-        const needsCap = /^(|\s*)$/.test(textBefore) ||
-                         /[.!?…]\s+$/.test(textBefore) ||
-                         /\n\s*$/.test(textBefore) ||
-                         /(^|\n)\s*[—–-]\s*$/.test(textBefore) ||
-                         /«\s*$/.test(textBefore);
-
-        if (needsCap && /^[a-zàèéìòù]$/.test(e.key)) {
+        const needsCap = /^\s*$/.test(textBefore)
+          || /[.!?…]\s+$/.test(textBefore)
+          || /\n\s*$/.test(textBefore)
+          || /(^|\n)\s*[—–-]\s*$/.test(textBefore)
+          || /[«“]\s*$/.test(textBefore);
+        if (needsCap && LOWER_LETTER.test(e.key)) {
           e.preventDefault();
-          const upper = e.key.toUpperCase();
-          const newText = textBefore + upper + textAfter;
-          onUpdateContent(newText);
-          setTimeout(() => {
-            textarea.selectionStart = textarea.selectionEnd = selectionStart + 1;
-            updateLineNumbers();
-            centerActiveLine(false);
-          }, 0);
+          replaceRange(selectionStart, selectionEnd, e.key.toUpperCase());
           return;
         }
       }
     }
 
-    // ============================================================
-    // 4. KEYBOARD SHORTCUTS WITH CTRL
-    // ============================================================
-    if ((e.ctrlKey || e.metaKey)) {
+    // 4. Editor-only shortcuts (global ones live in App)
+    if (e.ctrlKey || e.metaKey) {
       const key = e.key.toLowerCase();
-
-      // Ctrl+Shift+F: Format Manuscript to Publication Standards
-      if ((key === 'f' && e.shiftKey)) {
+      if (key === 'f' && e.shiftKey) {
         e.preventDefault();
         handleFormatForPublication();
-        return;
-      }
-
-      // Ctrl+S: Save to PC
-      if (key === 's') {
+      } else if (e.key === 'Enter' && activeSuggestions.length > 0) {
         e.preventDefault();
-        e.stopPropagation();
-        if (onSaveToDisk) onSaveToDisk();
-      }
-      // Ctrl+R: Revisione / Editor Room
-      else if (key === 'r') {
-        e.preventDefault();
-        if (onOpenReview) onOpenReview();
-      }
-      // Ctrl+B: Novel Bible
-      else if (key === 'b') {
-        e.preventDefault();
-        if (onOpenBible) onOpenBible();
-      }
-      // Ctrl+Enter / Ctrl+Y: Review the selected AI suggestion
-      else if ((e.key === 'Enter' || key === 'y') && activeSuggestions.length > 0) {
-        e.preventDefault();
-        const target = selectedSuggestion || activeSuggestions[0];
-        if (target) reviewSuggestion(target);
-      }
-      // Ctrl+D: Dismiss suggestion
-      else if (key === 'd' && selectedSuggestion) {
+        reviewSuggestion(selectedSuggestion || activeSuggestions[0]);
+      } else if (key === 'd' && selectedSuggestion) {
         e.preventDefault();
         dismissSuggestion(selectedSuggestion);
       }
     }
   };
 
-  // Handle text input
   const handleChange = (e) => {
-    if (onWritingActivity) onWritingActivity();
-    const newContent = e.target.value;
-    onUpdateContent(newContent);
-
-    // Center position immediately and update line metrics
+    onWritingActivity?.();
+    onUpdateContent(e.target.value);
     centerActiveLine(false);
     updateLineNumbers();
-
     if (settings.chunkCheckingEnabled) {
-      if (chunkTypingTimerRef.current) clearTimeout(chunkTypingTimerRef.current);
-      chunkTypingTimerRef.current = setTimeout(() => {
-        triggerChunkCheck();
-      }, 2500);
+      clearTimeout(chunkTypingTimerRef.current);
+      chunkTypingTimerRef.current = setTimeout(() => triggerChunkCheck(), 2500);
     }
   };
 
-  // When mouse moves, smoothly disable blur so the author can read the entire page clearly
   const handleContainerMouseMove = (e) => {
     const dx = Math.abs(e.clientX - lastMousePosRef.current.x);
     const dy = Math.abs(e.clientY - lastMousePosRef.current.y);
-
     if (dx > 4 || dy > 4) {
       lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-      if (isTypingFocusActive) {
-        setIsTypingFocusActive(false);
-      }
+      if (isTypingFocusActive) setIsTypingFocusActive(false);
     }
   };
 
-  const handleContainerScroll = () => {
-    if (isTypingFocusActive) {
-      setIsTypingFocusActive(false);
-    }
-  };
-
-  // Chunk checking logic & Bible Auto-Extraction
+  // ---------------------------------------------------------------------------
+  // Real-time companion: chunk check + Novel Bible auto-extraction
+  // ---------------------------------------------------------------------------
   const triggerChunkCheck = async () => {
     if (!textareaRef.current || isCheckingChunk) return;
     const text = textareaRef.current.value;
     if (!text || text.trim().length < 6) return;
 
     const cursorPos = textareaRef.current.selectionStart ?? text.length;
-    const beforeCursor = text.slice(0, cursorPos);
-    const afterCursor = text.slice(cursorPos);
-    const linesBefore = beforeCursor.split('\n');
-    const recentChunkLines = linesBefore.slice(-4);
-    const firstLineAfter = afterCursor.split('\n')[0] || '';
-    const recentChunk = [...recentChunkLines, firstLineAfter].join('\n').trim() || text.slice(-400);
+    const linesBefore = text.slice(0, cursorPos).split('\n');
+    const firstLineAfter = text.slice(cursorPos).split('\n')[0] || '';
+    const recentChunk = [...linesBefore.slice(-4), firstLineAfter].join('\n').trim() || text.slice(-400);
 
     setIsCheckingChunk(true);
     try {
-      // 1. Text & Typo Check
       const suggestions = await checkTextChunk({
         recentText: recentChunk,
         contextWindow: text.slice(Math.max(0, cursorPos - 1000), Math.min(text.length, cursorPos + 300)),
@@ -572,35 +420,26 @@ export default function Editor({
 
       if (Array.isArray(suggestions) && suggestions.length > 0) {
         setActiveSuggestions((prev) => {
-          const existingIds = new Set(prev.map(s => s.original + s.suggestion));
-          const newItems = suggestions.filter(s => !existingIds.has(s.original + s.suggestion));
-          const updated = [...newItems, ...prev].slice(0, 10);
-          if (updated.length > 0 && !selectedSuggestion) {
-            setSelectedSuggestion(updated[0]);
-          }
+          const existing = new Set(prev.map(s => s.original + s.suggestion));
+          const updated = [...suggestions.filter(s => !existing.has(s.original + s.suggestion)), ...prev].slice(0, 10);
+          setSelectedSuggestion(current => current || updated[0] || null);
           return updated;
         });
       }
 
-      // 2. Novel Bible Auto-Extraction (Auto-compile characters & lore)
       if (settings.autoSyncBible !== false && book && onUpdateBible) {
         const bibleRes = await extractBibleEntities({
-          chapterTitle: chapter?.title || 'Capitolo',
+          chapterTitle: chapter?.title || '',
           chapterContent: text,
           currentBible: book.bible || {},
           settings
         });
-
         if (bibleRes?.error) {
-          setBibleToast(`Bibbia non aggiornata: ${bibleRes.error}`);
-          setTimeout(() => setBibleToast(null), 6000);
-        } else if (bibleRes && bibleRes.newlyDiscoveredCount > 0) {
+          notify(t('editor.bibleNotUpdated', { error: bibleRes.error }), { tone: 'error' });
+        } else if (bibleRes?.newlyDiscoveredCount > 0) {
           onUpdateBible(bibleRes.updatedBible);
-          const firstChar = bibleRes.extracted.characters[0]?.name;
-          const firstLoc = bibleRes.extracted.locations[0]?.title;
-          const label = firstChar || firstLoc || 'Nuove entità';
-          setBibleToast(`✨ AI Companion: Aggiunto alla Bibbia: "${label}" (+${bibleRes.newlyDiscoveredCount})`);
-          setTimeout(() => setBibleToast(null), 4500);
+          const label = bibleRes.extracted.characters[0]?.name || bibleRes.extracted.locations[0]?.title || t('editor.newEntities');
+          notify(t('editor.bibleAdded', { label, count: bibleRes.newlyDiscoveredCount }), { tone: 'ai' });
         }
       }
     } catch (err) {
@@ -610,104 +449,90 @@ export default function Editor({
     }
   };
 
-  const reviewSuggestion = async (suggestion) => {
-    if (!textareaRef.current) return;
-    const text = textareaRef.current.value || '';
-    const cleanOriginal = (suggestion?.original || '').trim();
-
-    // Smart locator
+  const locateSentence = (text, cleanOriginal) => {
     let matchStart = -1;
-    if (cleanOriginal) {
-      matchStart = text.lastIndexOf(cleanOriginal);
-      if (matchStart < 0) {
-        const unquoted = cleanOriginal.replace(/^[«"“'—–\s-]+|[»"”'—–\s.-]+$/g, '').trim();
-        if (unquoted.length > 5) matchStart = text.lastIndexOf(unquoted);
-      }
-      if (matchStart < 0 && (cleanOriginal.includes('...') || cleanOriginal.includes('…'))) {
-        const parts = cleanOriginal.split(/\.{3}|…/).map(p => p.trim()).filter(p => p.length > 4);
-        for (const part of parts) {
-          const idx = text.lastIndexOf(part);
-          if (idx >= 0) { matchStart = idx; break; }
-        }
-      }
-      if (matchStart < 0) {
-        const normTarget = cleanOriginal.replace(/\s+/g, ' ');
-        const normText = text.replace(/\s+/g, ' ');
-        const nIdx = normText.lastIndexOf(normTarget);
-        if (nIdx >= 0) {
-          const words = normTarget.split(' ').slice(0, 3).join(' ');
-          matchStart = text.lastIndexOf(words);
-        }
+    if (!cleanOriginal) return matchStart;
+    matchStart = text.lastIndexOf(cleanOriginal);
+    if (matchStart < 0) {
+      const unquoted = cleanOriginal.replace(/^[«"“'—–\s-]+|[»"”'—–\s.-]+$/g, '').trim();
+      if (unquoted.length > 5) matchStart = text.lastIndexOf(unquoted);
+    }
+    if (matchStart < 0 && /\.{3}|…/.test(cleanOriginal)) {
+      for (const part of cleanOriginal.split(/\.{3}|…/).map(p => p.trim()).filter(p => p.length > 4)) {
+        const idx = text.lastIndexOf(part);
+        if (idx >= 0) return idx;
       }
     }
+    if (matchStart < 0) {
+      const normTarget = cleanOriginal.replace(/\s+/g, ' ');
+      if (text.replace(/\s+/g, ' ').lastIndexOf(normTarget) >= 0) {
+        matchStart = text.lastIndexOf(normTarget.split(' ').slice(0, 3).join(' '));
+      }
+    }
+    return matchStart;
+  };
+
+  const reviewSuggestion = async (suggestion) => {
+    if (!textareaRef.current || !suggestion) return;
+    const text = textareaRef.current.value || '';
+    const cleanOriginal = (suggestion.original || '').trim();
+    const matchStart = locateSentence(text, cleanOriginal);
+    const isLocated = matchStart >= 0;
 
     let sentence = cleanOriginal;
     let start = 0;
     let end = 0;
-    const isLocated = matchStart >= 0;
-
     if (isLocated) {
-      const precedingText = text.slice(0, matchStart);
-      const lastBoundary = Math.max(
-        precedingText.lastIndexOf('\n'),
-        precedingText.lastIndexOf('.'),
-        precedingText.lastIndexOf('!'),
-        precedingText.lastIndexOf('?'),
-        precedingText.lastIndexOf('…')
-      );
-      start = lastBoundary + 1;
+      const preceding = text.slice(0, matchStart);
+      start = Math.max(...['\n', '.', '!', '?', '…'].map(ch => preceding.lastIndexOf(ch))) + 1;
       while (/\s/.test(text[start] || '') && text[start] !== '\n') start += 1;
-
-      const matchedLen = Math.min(cleanOriginal.length || 1, text.length - matchStart);
-      const matchEnd = matchStart + matchedLen;
-      const followingText = text.slice(matchEnd);
-      const nextBoundary = followingText.search(/[.!?…\n]/);
-      end = nextBoundary < 0 ? text.length : matchEnd + nextBoundary + (followingText[nextBoundary] === '\n' ? 0 : 1);
+      const matchEnd = matchStart + Math.min(cleanOriginal.length || 1, text.length - matchStart);
+      const following = text.slice(matchEnd);
+      const nextBoundary = following.search(/[.!?…\n]/);
+      end = nextBoundary < 0 ? text.length : matchEnd + nextBoundary + (following[nextBoundary] === '\n' ? 0 : 1);
       sentence = text.slice(start, end).trimEnd();
+      end = start + sentence.length;
     }
 
-    const review = {
+    setSelectedSuggestion(suggestion);
+    setSuggestionReview({
       suggestion,
       start,
-      end: isLocated ? (start + sentence.length) : 0,
+      end,
       original: sentence,
       improved: sentence,
-      explanation: suggestion?.reason || '',
+      explanation: suggestion.reason || '',
       isLocated,
       fallback: false,
       loading: true,
-      error: !isLocated ? 'Nota: La frase non è stata localizzata esattamente nel capitolo. Puoi comunque confrontare o modificare la proposta.' : null
-    };
-    setSelectedSuggestion(suggestion);
-    setSuggestionReview(review);
+      error: isLocated ? null : t('editor.sentenceNotLocated')
+    });
 
-    // Call AI to rewrite based on the editor recommendation
     try {
       const result = await rewriteSuggestion({
         sentence,
         context: text.slice(Math.max(0, start - 350), Math.min(text.length, end + 350)),
         bookContext: buildNovelContext(book, chapter?.id),
-        original: suggestion?.original,
-        reason: suggestion?.reason,
-        suggestion: suggestion?.suggestion,
+        original: suggestion.original,
+        reason: suggestion.reason,
+        suggestion: suggestion.suggestion,
         settings
       });
       setSuggestionReview(current => current ? {
         ...current,
         ...result,
-        improved: result.improved && result.improved.trim() ? result.improved.trim() : current.original,
+        improved: result.improved?.trim() ? result.improved.trim() : current.original,
         loading: false
       } : current);
     } catch (err) {
-      setSuggestionReview(curr => curr ? { ...curr, loading: false, error: err.message || 'Errore riscrittura AI.' } : curr);
+      setSuggestionReview(current => current ? { ...current, loading: false, error: err.message || t('editor.rewriteFailed') } : current);
     }
   };
 
   const requestEditorAiAlternative = async () => {
     if (!suggestionReview || !textareaRef.current) return;
-    setSuggestionReview(curr => ({ ...curr, loading: true, error: null }));
+    setSuggestionReview(current => ({ ...current, loading: true, error: null }));
     const text = textareaRef.current.value || '';
-
     try {
       const result = await rewriteSuggestion({
         sentence: suggestionReview.original,
@@ -718,19 +543,23 @@ export default function Editor({
         suggestion: suggestionReview.suggestion?.suggestion,
         settings
       });
-      setSuggestionReview(current => current
-        ? {
-            ...current,
-            ...result,
-            improved: result.improved && result.improved.trim() ? result.improved : current.improved,
-            loading: false
-          }
-        : current);
+      setSuggestionReview(current => current ? {
+        ...current,
+        ...result,
+        improved: result.improved?.trim() ? result.improved : current.improved,
+        loading: false
+      } : current);
     } catch (error) {
-      setSuggestionReview(current => current
-        ? { ...current, loading: false, error: error.message || 'Impossibile generare una variante alternativa.' }
-        : current);
+      setSuggestionReview(current => current ? { ...current, loading: false, error: error.message || t('editor.alternativeFailed') } : current);
     }
+  };
+
+  const dismissSuggestion = (suggestion) => {
+    setActiveSuggestions(prev => {
+      const remaining = prev.filter(s => s !== suggestion && (!s.id || s.id !== suggestion?.id));
+      setSelectedSuggestion(remaining[0] || null);
+      return remaining;
+    });
   };
 
   const applyReviewedSuggestion = () => {
@@ -739,61 +568,62 @@ export default function Editor({
     const { start, end, original, improved, isLocated, suggestion } = suggestionReview;
 
     if (isLocated && currentText.slice(start, end) === original) {
-      const updated = currentText.slice(0, start) + improved + currentText.slice(end);
-      onUpdateContent(updated);
+      replaceRange(start, end, improved);
     } else {
-      const cleanOrig = suggestion?.original || original;
-      if (cleanOrig && currentText.includes(cleanOrig)) {
-        const idx = currentText.lastIndexOf(cleanOrig);
-        const updated = currentText.slice(0, idx) + improved + currentText.slice(idx + cleanOrig.length);
-        onUpdateContent(updated);
-      } else {
-        setSuggestionReview(current => ({
-          ...current,
-          error: 'La frase nel capitolo è cambiata. Puoi copiare la proposta e incollarla direttamente nel testo.'
-        }));
+      const fallbackOriginal = suggestion?.original || original;
+      const idx = fallbackOriginal ? currentText.lastIndexOf(fallbackOriginal) : -1;
+      if (idx < 0) {
+        setSuggestionReview(current => ({ ...current, error: t('editor.sentenceChanged') }));
         return;
       }
+      replaceRange(idx, idx + fallbackOriginal.length, improved);
     }
-
-    dismissSuggestion(suggestionReview.suggestion);
+    dismissSuggestion(suggestion);
     setSuggestionReview(null);
   };
 
-  // Dismiss suggestion
-  const dismissSuggestion = (suggestion) => {
-    setActiveSuggestions(prev => {
-      const remaining = prev.filter(s => s !== suggestion && s.id !== suggestion.id);
-      setSelectedSuggestion(remaining[0] || null);
-      return remaining;
-    });
-  };
-
-  // Text selection handler for instant AI rewriting
-  const handleSelectText = () => {
-    centerActiveLine(false);
-    if (!textareaRef.current) return;
-    setIsChapterRefinementActive(false);
-    const { selectionStart, selectionEnd, value } = textareaRef.current;
-    
-    if (selectionEnd - selectionStart > 12) {
-      const selected = value.slice(selectionStart, selectionEnd);
-      const nextRange = { start: selectionStart, end: selectionEnd, text: selected };
-      setSelectionRange(nextRange);
-      setClosingSelectionRange(nextRange);
-      setEnhancedResult(null);
-      setEnhancementError(null);
-    } else {
-      closeSelectionPopup();
-      setEnhancedResult(null);
-      setEnhancementError(null);
-    }
-  };
-
+  // ---------------------------------------------------------------------------
+  // Selection quick actions & chapter refinement
+  // ---------------------------------------------------------------------------
   const closeSelectionPopup = () => {
     if (selectionRange) setClosingSelectionRange(selectionRange);
     setSelectionRange(null);
     setIsChapterRefinementActive(false);
+  };
+
+  // Esc closes the quick-actions popup first (and cancels a running request)
+  useEffect(() => {
+    if (!selectionRange || suggestionReview) return undefined;
+    const onKey = (event) => {
+      if (event.key !== 'Escape') return;
+      event.stopPropagation();
+      enhancementAbortControllerRef.current?.abort();
+      setClosingSelectionRange(selectionRange);
+      setSelectionRange(null);
+      setIsChapterRefinementActive(false);
+      setEnhancedResult(null);
+      setEnhancementError(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [selectionRange, suggestionReview]);
+
+  const handleSelectText = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    updateLineNumbers();
+    if (isEnhancing) return;
+    const { selectionStart, selectionEnd, value } = textarea;
+    if (selectionEnd - selectionStart > 12) {
+      const nextRange = { start: selectionStart, end: selectionEnd, text: value.slice(selectionStart, selectionEnd) };
+      setIsChapterRefinementActive(false);
+      setSelectionRange(nextRange);
+      setClosingSelectionRange(nextRange);
+      setEnhancedResult(null);
+      setEnhancementError(null);
+    } else if (selectionRange && !enhancedResult) {
+      closeSelectionPopup();
+    }
   };
 
   const handleRunEnhancement = async (mode, textOverride = null) => {
@@ -816,66 +646,58 @@ export default function Editor({
       setEnhancedResult({ ...result, mode });
     } catch (error) {
       if (error.name === 'AbortError') {
-        setEnhancementError('Richiesta annullata.');
+        setEnhancementError(t('editor.requestCancelled'));
         return;
       }
       console.error('Failed to enhance paragraph', error);
-      setEnhancementError(error.message || 'Impossibile completare la revisione AI.');
+      setEnhancementError(error.message || t('editor.enhanceFailed'));
     } finally {
-      if (enhancementAbortControllerRef.current === abortController) {
-        enhancementAbortControllerRef.current = null;
-      }
+      if (enhancementAbortControllerRef.current === abortController) enhancementAbortControllerRef.current = null;
       setIsEnhancing(false);
     }
-  };
-
-  const handleCancelEnhancement = () => {
-    enhancementAbortControllerRef.current?.abort();
   };
 
   const handleRunChapterRefinement = async () => {
     const chapterText = chapter?.content || '';
     if (!chapterText.trim()) return;
-    setIsChapterRefinementActive(true);
     const wholeChapterRange = { start: 0, end: chapterText.length, text: chapterText };
+    setIsChapterRefinementActive(true);
     setSelectionRange(wholeChapterRange);
     setClosingSelectionRange(wholeChapterRange);
     await handleRunEnhancement('refinement', chapterText);
   };
 
   const handleApplyEnhanced = () => {
-    if (!enhancedResult?.improved || !selectionRange) return;
+    if (!enhancedResult?.improved || !selectionRange || !textareaRef.current) return;
     const current = textareaRef.current.value;
     if (current.slice(selectionRange.start, selectionRange.end) !== selectionRange.text) {
-      setEnhancementError('Il testo selezionato è cambiato durante la revisione. Selezionalo di nuovo prima di applicare la proposta.');
+      setEnhancementError(t('editor.selectionChanged'));
       return;
     }
-    const before = current.slice(0, selectionRange.start);
-    const after = current.slice(selectionRange.end);
-    const updated = before + enhancedResult.improved + after;
-    onUpdateContent(updated);
+    replaceRange(selectionRange.start, selectionRange.end, enhancedResult.improved);
     closeSelectionPopup();
     setEnhancedResult(null);
     setEnhancementError(null);
   };
 
-  // Initial and chapter change setup
+  // Chapter tools are triggered from the top bar
+  useImperativeHandle(ref, () => ({
+    format: handleFormatForPublication,
+    refine: handleRunChapterRefinement
+  }));
+
+  const isRefining = isEnhancing && isChapterRefinementActive;
   useEffect(() => {
-    centerActiveLine(true);
-  }, [chapter?.id, centerActiveLine]);
+    onRefiningChange?.(isRefining);
+  }, [isRefining, onRefiningChange]);
 
-  // Width limit mapping
-  const maxWidthMap = {
-    compact: '700px',
-    standard: '840px',
-    wide: '980px'
-  };
-  const activeMaxWidth = maxWidthMap[settings.editorWidth] || '840px';
-
-  // Boundary style class
+  // ---------------------------------------------------------------------------
+  // Layout
+  // ---------------------------------------------------------------------------
+  const editorWidthPx = EDITOR_WIDTHS[settings.editorWidth] || EDITOR_WIDTHS.standard;
+  const activeMaxWidth = `${editorWidthPx}px`;
   const boundaryClass = `boundary-${settings.pageBoundaryStyle || 'shadow'}`;
 
-  // Line focus blur intensity values
   const intensityMap = {
     soft: { blur: '1.5px', opacity: 0.65 },
     medium: { blur: '2.5px', opacity: 0.85 },
@@ -886,32 +708,25 @@ export default function Editor({
   const isWholeChapterSelected = Boolean(
     visibleSelectionRange && visibleSelectionRange.start === 0 && visibleSelectionRange.end === (chapter?.content || '').length
   );
+  const selectedWordCount = visibleSelectionRange ? visibleSelectionRange.text.trim().split(/\s+/).filter(Boolean).length : 0;
+  const providerName = { gemini: 'Gemini', openai: 'OpenAI', ollama: 'Ollama', claude: 'Claude' }[settings.aiProvider] || 'AI';
+  const textStyle = {
+    fontFamily: settings.fontFamily || 'var(--font-serif)',
+    fontSize: `${fontSize}px`,
+    lineHeight: lineHeightRatio,
+    textAlign: settings.textAlignment || 'left',
+    letterSpacing: '0.005em'
+  };
 
   return (
-    <div 
-      ref={containerRef} 
-      className="editor-container"
+    <div
+      ref={containerRef}
+      className={`editor-container ${typewriterMode ? 'is-typewriter' : ''}`}
       onMouseMove={handleContainerMouseMove}
-      onScroll={handleContainerScroll}
-      style={{
-        flex: 1,
-        width: '100%',
-        height: '100%',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        paddingTop: '50vh',
-        paddingBottom: '50vh',
-        scrollBehavior: 'auto'
-      }}
+      onScroll={() => isTypingFocusActive && setIsTypingFocusActive(false)}
     >
-      {/* Dynamic Line-Focus Blur Overlays (active when typing, disappears on mouse move) */}
       {settings.lineFocusBlur && (
         <>
-          {/* Top Blur Mask */}
           <div
             className="line-focus-overlay line-focus-top"
             style={{
@@ -920,16 +735,6 @@ export default function Editor({
               WebkitBackdropFilter: isTypingFocusActive ? `blur(${currentIntensity.blur})` : 'none'
             }}
           />
-
-          {/* Center Active Line Spotlight */}
-          <div 
-            className="active-line-spotlight"
-            style={{
-              opacity: isTypingFocusActive ? 0.35 : 0
-            }}
-          />
-
-          {/* Bottom Blur Mask */}
           <div
             className="line-focus-overlay line-focus-bottom"
             style={{
@@ -941,75 +746,29 @@ export default function Editor({
         </>
       )}
 
-      {/* Novel Page Canvas with Custom Boundary */}
-      <div 
-        className={`editor-column ${boundaryClass}`}
-        style={{
-          width: '100%',
-          maxWidth: activeMaxWidth,
-          position: 'relative',
-          display: 'flex',
-          flexDirection: 'column',
-          transition: 'box-shadow var(--transition-normal), border-color var(--transition-normal)'
-        }}
-      >
-        {/* Hidden Caret Measuring Mirror */}
-        <div
-          ref={mirrorRef}
-          aria-hidden="true"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            visibility: 'hidden',
-            pointerEvents: 'none',
-            whiteSpace: 'pre-wrap',
-            wordWrap: 'break-word',
-            overflowWrap: 'break-word',
-            fontFamily: settings.fontFamily || 'var(--font-serif)',
-            fontSize: `${settings.fontSize || 19}px`,
-            lineHeight: settings.lineHeight || 2.1,
-            textAlign: settings.textAlignment || 'left',
-            letterSpacing: '0.012em',
-            padding: 0,
-            margin: 0,
-            boxSizing: 'border-box',
-            zIndex: -9999
-          }}
-        />
-        {/* Chapter Title Input */}
-        <div style={{ marginBottom: '2.5rem' }}>
-          <input
-            type="text"
-            value={chapter?.title || ''}
-            onChange={(e) => {
-              if (onWritingActivity) onWritingActivity();
-              onUpdateContent(chapter?.content, e.target.value);
-            }}
-            placeholder="Titolo del Capitolo..."
-            aria-label="Titolo del Capitolo"
-            style={{
-              width: '100%',
-              fontSize: '1.75rem',
-              fontWeight: '700',
-              fontFamily: 'var(--font-title)',
-              color: 'var(--text-primary)',
-              border: 'none',
-              borderBottom: '1px solid transparent',
-              padding: '0.4rem 0',
-              background: 'transparent',
-              outline: 'none',
-              letterSpacing: '0.02em',
-              transition: 'border-color var(--transition-fast)'
-            }}
-            onFocus={(e) => e.target.style.borderBottom = '1px solid var(--accent-cyan-dim)'}
-            onBlur={(e) => e.target.style.borderBottom = '1px solid transparent'}
-          />
+      <div key={chapter?.id} className={`editor-column page-enter ${boundaryClass}`} style={{ maxWidth: activeMaxWidth }}>
+        <div ref={mirrorRef} aria-hidden="true" className="editor-mirror" style={textStyle} />
+
+        <div className="editor-chapter-eyebrow" aria-hidden="true">
+          <span className="editor-ornament" />
         </div>
 
-        {/* Writing Textarea */}
+        <input
+          type="text"
+          className="editor-title-input"
+          value={chapter?.title || ''}
+          onChange={(e) => {
+            onWritingActivity?.();
+            onUpdateContent(chapter?.content || '', e.target.value);
+          }}
+          placeholder={t('editor.chapterTitlePlaceholder')}
+          aria-label={t('editor.chapterTitleLabel')}
+          spellCheck={false}
+        />
+
         <textarea
           ref={textareaRef}
+          className="editor-textarea"
           value={chapter?.content || ''}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
@@ -1017,666 +776,133 @@ export default function Editor({
             centerActiveLine(false);
             updateLineNumbers();
           }}
-          onClick={(e) => {
-            handleSelectText(e);
-            updateLineNumbers();
-          }}
-          onSelect={(e) => {
-            handleSelectText(e);
-            updateLineNumbers();
-          }}
-          placeholder="Inizia a scrivere qui. Lascia che la storia prenda vita..."
-          aria-label="Area di scrittura capitolo"
+          onClick={handleSelectText}
+          onSelect={handleSelectText}
+          placeholder={t('editor.placeholder')}
+          aria-label={t('editor.textareaLabel')}
           autoFocus
           spellCheck={false}
-          style={{
-            width: '100%',
-            minHeight: '60vh',
-            resize: 'none',
-            border: 'none',
-            outline: 'none',
-            background: 'transparent',
-            color: 'var(--text-primary)',
-            fontFamily: settings.fontFamily || 'var(--font-serif)',
-            fontSize: `${settings.fontSize || 19}px`,
-            lineHeight: settings.lineHeight || 2.1,
-            textAlign: settings.textAlignment || 'left',
-            caretColor: 'var(--cursor-neon)',
-            letterSpacing: '0.012em',
-            padding: '0',
-            overflow: 'hidden'
-          }}
+          style={textStyle}
         />
+      </div>
 
-        {/* Floating Selection AI Quick Actions */}
-        {shouldShowSelectionPopup && visibleSelectionRange && (isChapterRefinementActive || !isWholeChapterSelected || isSelectionPopupExiting) && (
-          <div 
-            className={`glass-panel selection-ai-popup ${isSelectionPopupExiting ? 'selection-ai-popup-exit' : ''}`}
-            style={{
-              position: 'fixed',
-              bottom: '5.2rem',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 120,
-              padding: '0.65rem 1rem',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '0.65rem',
-              maxWidth: isChapterRefinementActive ? activeMaxWidth : '560px',
-              maxHeight: '85vh',
-              overflowY: 'auto',
-              width: isChapterRefinementActive ? `min(${activeMaxWidth}, calc(100vw - 2rem))` : 'min(560px, calc(100vw - 2rem))',
-              pointerEvents: isSelectionPopupExiting ? 'none' : 'auto',
-              boxShadow: '0 10px 35px rgba(0, 0, 0, 0.7)'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.74rem', color: 'var(--accent-cyan)', fontWeight: '600' }}>
-                <Sparkles size={14} />
-                <span>{isChapterRefinementActive ? 'Rifinitura del capitolo' : `Azioni Rapide Scrittore (${visibleSelectionRange.text.split(/\s+/).length} parole selezionate)`}</span>
-              </div>
-              <button onClick={closeSelectionPopup} style={{ color: 'var(--text-muted)' }}>
-                <X size={14} />
-              </button>
-            </div>
-
-            {/* Quick Action Buttons */}
-            {!isChapterRefinementActive && !isWholeChapterSelected && (
-              <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
-              <button
-                onClick={() => handleRunEnhancement('pacingBoost')}
-                disabled={isEnhancing}
-                style={{
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: 'var(--radius-xs)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '0.74rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  color: 'var(--text-primary)'
-                }}
-              >
-                <Flame size={12} style={{ color: 'var(--accent-coral)' }} /> Ritmo Incalzante
-              </button>
-
-              <button
-                onClick={() => handleRunEnhancement('showDontTell')}
-                disabled={isEnhancing}
-                style={{
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: 'var(--radius-xs)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '0.74rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  color: 'var(--text-primary)'
-                }}
-              >
-                <EyeOff size={12} style={{ color: 'var(--accent-amber)' }} /> Mostra non Raccontare
-              </button>
-
-              <button
-                onClick={() => handleRunEnhancement('dialogueSharp')}
-                disabled={isEnhancing}
-                style={{
-                  padding: '0.35rem 0.65rem',
-                  borderRadius: 'var(--radius-xs)',
-                  backgroundColor: 'var(--bg-elevated)',
-                  border: '1px solid var(--border-subtle)',
-                  fontSize: '0.74rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.3rem',
-                  color: 'var(--text-primary)'
-                }}
-              >
-                <MessageSquare size={12} style={{ color: 'var(--accent-cyan)' }} /> Affila Dialogo
-              </button>
-              </div>
-            )}
-
-            {/* Enhanced Result Preview */}
-            {isEnhancing && (
-              <div role="status" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                <RefreshCw size={12} className="animate-spin" style={{ color: 'var(--accent-cyan)' }} />
-                <span style={{ flex: 1 }}>
-                  {settings.aiProvider === 'ollama'
-                    ? `Richiesta inviata a Ollama. In attesa del modello da ${enhancementElapsedSeconds}s. La modalità API attuale non espone il progresso dei token.`
-                    : `Richiesta inviata al provider AI (${enhancementElapsedSeconds}s). In attesa della risposta...`}
-                </span>
-                <button type="button" onClick={handleCancelEnhancement} style={{ flexShrink: 0, color: 'var(--accent-coral)', fontSize: '0.72rem' }}>Annulla</button>
-              </div>
-            )}
-
-            {enhancementError && <p role="alert" style={{ margin: 0, color: 'var(--accent-coral)', fontSize: '0.76rem' }}>{enhancementError}</p>}
-
-            {enhancedResult && (
-              <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--accent-cyan)' }}>
-                {enhancedResult.mode === 'refinement' ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '0.7rem', marginBottom: '0.65rem' }}>
-                    <label style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: '700' }}>
-                      Originale
-                      <textarea
-                        value={visibleSelectionRange.text}
-                        readOnly
-                        rows={14}
-                        style={{ boxSizing: 'border-box', width: '100%', height: 'min(52vh, 520px)', resize: 'vertical', padding: '0.75rem', lineHeight: 1.55, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xs)', fontFamily: 'var(--font-serif)', fontSize: '0.84rem' }}
-                      />
-                    </label>
-                    <label style={{ display: 'flex', minWidth: 0, flexDirection: 'column', gap: '0.35rem', color: 'var(--text-secondary)', fontSize: '0.72rem', fontWeight: '700' }}>
-                      Rifinitura, modificabile
-                      <textarea
-                        value={enhancedResult.improved}
-                        onChange={event => setEnhancedResult(current => ({ ...current, improved: event.target.value }))}
-                        rows={14}
-                        style={{ boxSizing: 'border-box', width: '100%', height: 'min(52vh, 520px)', resize: 'vertical', padding: '0.75rem', lineHeight: 1.55, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--accent-cyan)', borderRadius: 'var(--radius-xs)', fontFamily: 'var(--font-serif)', fontSize: '0.84rem' }}
-                      />
-                    </label>
-                  </div>
-                ) : (
-                  <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontStyle: 'italic', marginBottom: '0.4rem', lineHeight: 1.5 }}>
-                    "{enhancedResult.improved}"
-                  </div>
-                )}
-                {enhancedResult.explanation && (
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginBottom: '0.65rem' }}>
-                    {enhancedResult.explanation}
-                  </div>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.45rem' }}>
-                  <button
-                    onClick={() => setEnhancedResult(null)}
-                    style={{ padding: '0.25rem 0.6rem', fontSize: '0.72rem', color: 'var(--text-muted)' }}
-                  >
-                    Annulla
-                  </button>
-                  <button
-                    onClick={handleApplyEnhanced}
-                    style={{
-                      padding: '0.3rem 0.75rem',
-                      backgroundColor: 'var(--accent-cyan)',
-                      color: '#1a1612',
-                      fontSize: '0.72rem',
-                      fontWeight: '700',
-                      borderRadius: 'var(--radius-xs)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.3rem'
-                    }}
-                  >
-                    <Check size={12} /> {enhancedResult.mode === 'refinement' ? 'Applica rifinitura' : 'Sostituisci nel testo'}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {suggestionReview && (
-          <div
-            role="presentation"
-            onClick={() => setSuggestionReview(null)}
-            className="m3-modal-backdrop"
-            style={{
-              position: 'fixed',
-              inset: 0,
-              zIndex: 320,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: '1.25rem',
-              backgroundColor: 'rgba(10, 8, 6, 0.85)',
-              backdropFilter: 'blur(10px)'
-            }}
-          >
-            <section
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="suggestion-review-title"
-              onClick={event => event.stopPropagation()}
-              className="m3-popup-panel"
-              style={{
-                width: 'min(920px, 96vw)',
-                maxHeight: '90vh',
-                overflowY: 'auto',
-                padding: '1.5rem',
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--accent-cyan-dim)',
-                borderRadius: 'var(--radius-md)',
-                boxShadow: '0 24px 70px rgba(0, 0, 0, 0.8)'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '0.75rem' }}>
-                <div>
-                  <h2 id="suggestion-review-title" style={{ margin: 0, color: 'var(--text-primary)', fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Sparkles size={18} style={{ color: 'var(--accent-cyan)' }} />
-                    Rivedi e Confronta la Proposta AI
-                  </h2>
-                  <p style={{ margin: '0.3rem 0 0', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>{suggestionReview.suggestion?.reason}</p>
-                </div>
-                <button onClick={() => setSuggestionReview(null)} aria-label="Chiudi revisione" style={{ color: 'var(--text-secondary)', background: 'transparent', border: 'none', cursor: 'pointer', padding: '0.35rem' }}>
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* Visual Word-Diff Preview */}
-              <div style={{ marginBottom: '1.25rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: '700', color: 'var(--accent-cyan)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                    Differenze nel testo (Parole Modificate)
-                  </span>
-                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span style={{ color: 'var(--accent-coral)', textDecoration: 'line-through', marginRight: '8px' }}>Rosso = rimosso</span>
-                    <span style={{ color: 'var(--accent-green, #7da87b)', fontWeight: '600' }}>Verde = inserito</span>
-                  </span>
-                </div>
-                {suggestionReview.loading ? (
-                  <div style={{ padding: '1.5rem', background: 'var(--bg-primary)', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--accent-cyan)' }}>
-                    <AiCircleLoader
-                      compact={true}
-                      size={32}
-                      message="L'AI sta riscrivendo la frase in prosa narrativa..."
-                      submessage="Elaborazione delle variazioni e mantenimento dello stile"
-                    />
-                  </div>
-                ) : (
-                  <DiffViewer original={suggestionReview.original} modified={suggestionReview.improved} />
-                )}
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '1rem' }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--text-secondary)', fontSize: '0.78rem', fontWeight: '700' }}>
-                  Originale nel capitolo
-                  <textarea
-                    value={suggestionReview.original}
-                    readOnly
-                    rows={5}
-                    style={{ width: '100%', resize: 'vertical', padding: '0.75rem', lineHeight: 1.6, color: 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', color: 'var(--accent-cyan)', fontSize: '0.78rem', fontWeight: '700' }}>
-                  Proposta AI (modificabile prima di applicare)
-                  <textarea
-                    value={suggestionReview.loading ? 'Generazione della riscrittura in corso...' : suggestionReview.improved}
-                    disabled={suggestionReview.loading}
-                    onChange={event => setSuggestionReview(current => ({ ...current, improved: event.target.value }))}
-                    rows={5}
-                    style={{ width: '100%', resize: 'vertical', padding: '0.75rem', lineHeight: 1.6, color: suggestionReview.loading ? 'var(--text-muted)' : 'var(--text-primary)', background: 'var(--bg-primary)', border: '1px solid var(--accent-cyan)', borderRadius: 'var(--radius-sm)', fontFamily: 'var(--font-serif)', fontSize: '0.9rem' }}
-                  />
-                </label>
-              </div>
-              {suggestionReview.explanation && (
-                <p style={{ marginTop: '0.8rem', color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.5, background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', borderLeft: '3px solid var(--accent-amber)' }}>
-                  <strong>Spiegazione editoriale:</strong> {suggestionReview.explanation}
-                </p>
-              )}
-              {suggestionReview.error && <p role="alert" style={{ color: 'var(--accent-coral)', fontSize: '0.8rem', marginTop: '0.8rem' }}>{suggestionReview.error}</p>}
-              {suggestionReview.fallback && <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.5rem' }}>Nessun provider AI configurato: proposta generata con euristiche locali.</p>}
-
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.65rem', marginTop: '1.25rem', borderTop: '1px solid var(--border-subtle)', paddingTop: '0.9rem' }}>
-                <div>
-                  <button
-                    type="button"
-                    onClick={requestEditorAiAlternative}
-                    disabled={suggestionReview.loading}
-                    className="m3-btn m3-btn-outlined"
-                    title="Chiedi all'AI di generare una nuova variante alternativa per questa frase"
-                    style={{ 
-                      padding: '0.45rem 0.85rem', 
-                      fontSize: '0.74rem',
-                      color: 'var(--accent-amber)',
-                      borderColor: 'rgba(229, 169, 83, 0.3)'
-                    }}
-                  >
-                    <Sparkles size={13} className="m3-icon-bounce" />
-                    <span>{suggestionReview.loading ? 'Generando variante...' : 'Altra variante AI'}</span>
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                  <button 
-                    onClick={() => setSuggestionReview(null)} 
-                    className="m3-btn m3-btn-outlined"
-                    style={{ padding: '0.45rem 0.85rem', color: 'var(--text-secondary)' }}
-                  >
-                    Annulla
-                  </button>
-                  <button
-                    onClick={applyReviewedSuggestion}
-                    disabled={suggestionReview.loading || !suggestionReview.improved.trim() || suggestionReview.improved === suggestionReview.original}
-                    className="m3-btn m3-btn-filled"
-                    style={{ 
-                      padding: '0.5rem 1.1rem', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      gap: '0.45rem', 
-                      fontWeight: '700', 
-                      opacity: (suggestionReview.loading || !suggestionReview.improved.trim() || suggestionReview.improved === suggestionReview.original) ? 0.5 : 1 
-                    }}
-                  >
-                    <Check size={15} /> Applica al testo
-                  </button>
-                </div>
-              </div>
-            </section>
-          </div>
-        )}
-
-        {/* Bible Auto-Sync Toast Notification */}
-        {bibleToast && (
-          <div 
-            className="glass-panel animate-fade-in"
-            style={{
-              position: 'fixed',
-              top: '4.75rem',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 140,
-              padding: '0.65rem 1.35rem',
-              backgroundColor: 'var(--bg-elevated)',
-              border: '1px solid var(--accent-cyan)',
-              borderRadius: 'var(--radius-full)',
-              color: 'var(--text-primary)',
-              fontSize: '0.82rem',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.5rem',
-              boxShadow: '0 12px 35px rgba(0, 0, 0, 0.7)'
-            }}
-          >
-            <Sparkles size={16} style={{ color: 'var(--accent-cyan)' }} />
-            <span>{bibleToast}</span>
-          </div>
-        )}
-
-        {/* Publication Formatting Toast Notification */}
-        {editorialToast && (
-          <div 
-            className="glass-panel animate-fade-in"
-            style={{
-              position: 'fixed',
-              top: '4.75rem',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              zIndex: 145,
-              padding: '0.7rem 1.5rem',
-              backgroundColor: 'var(--bg-elevated)',
-              border: '1px solid var(--accent-green, #4ade80)',
-              borderRadius: 'var(--radius-full)',
-              color: 'var(--text-primary)',
-              fontSize: '0.82rem',
-              fontWeight: '600',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.55rem',
-              boxShadow: '0 14px 40px rgba(0, 0, 0, 0.75)'
-            }}
-          >
-            <CheckCheck size={17} style={{ color: 'var(--accent-green, #4ade80)' }} />
-            <span>{editorialToast}</span>
-          </div>
-        )}
-
-        {/* AI Companion Floating Hub (Real-Time Typo & Literary Assistant) */}
+      {/* Selection quick actions & chapter refinement */}
+      {shouldShowSelectionPopup && visibleSelectionRange && (isChapterRefinementActive || !isWholeChapterSelected || isSelectionPopupExiting) && (
         <div
+          className={`selection-ai-popup editor-selection-popup ${isSelectionPopupExiting ? 'selection-ai-popup-exit' : ''}`}
           style={{
-            position: 'fixed',
-            bottom: '4.5rem',
-            right: '2.5rem',
-            zIndex: 130,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            gap: '0.65rem'
+            width: `min(${isChapterRefinementActive ? '980px' : '560px'}, calc(100% - 2.5rem))`,
+            pointerEvents: isSelectionPopupExiting ? 'none' : 'auto'
           }}
         >
-          {/* Expanded Companion Panel */}
-          {(isCompanionExpanded || (activeSuggestions.length > 0 && !selectionRange)) && (
-            <div 
-              className="ai-suggestion-card glass-panel animate-fade-in"
-              style={{
-                width: '400px',
-                maxWidth: '90vw',
-                maxHeight: '440px',
-                display: 'flex',
-                flexDirection: 'column',
-                borderRadius: 'var(--radius-md)',
-                border: `1px solid ${activeSuggestions.length > 0 ? 'var(--accent-cyan)' : 'var(--border-subtle)'}`,
-                backgroundColor: 'var(--bg-card)',
-                boxShadow: '0 15px 45px rgba(0, 0, 0, 0.8)',
-                overflow: 'hidden'
-              }}
-            >
-              <div 
-                style={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'space-between', 
-                  padding: '0.75rem 1rem',
-                  borderBottom: '1px solid var(--border-subtle)',
-                  backgroundColor: 'var(--bg-elevated)'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: 'var(--accent-cyan)' }}>
-                  <Sparkles size={15} />
-                  <span style={{ fontWeight: '700', letterSpacing: '0.04em', fontSize: '0.78rem' }}>
-                    AI Companion ({activeSuggestions.length} {activeSuggestions.length === 1 ? 'segnalazione' : 'segnalazioni'})
-                  </span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                  <button
-                    onClick={handleFormatForPublication}
-                    title="Rifinisci formattazione capoversi, punteggiatura e dialoghi (Ctrl+Shift+F)"
-                    className="m3-chip"
-                    style={{
-                      padding: '0.25rem 0.55rem',
-                      fontSize: '0.7rem',
-                      fontWeight: '600',
-                      borderRadius: 'var(--radius-xs)',
-                      background: 'rgba(255, 255, 255, 0.06)',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    <Feather size={11} style={{ color: 'var(--accent-amber)' }} /> Formatta
-                  </button>
-                  <button 
-                    onClick={() => setActiveSuggestions([])}
-                    title="Chiudi pannello suggerimenti"
-                    style={{ color: 'var(--text-secondary)', padding: '2px', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                  >
-                    <X size={15} />
-                  </button>
-                </div>
-              </div>
+          <div className="editor-popup-head">
+            <div className="editor-popup-title">
+              <Sparkles size={14} />
+              <span>{isChapterRefinementActive ? t('editor.chapterRefinement') : t('editor.quickActions', { count: selectedWordCount })}</span>
+            </div>
+            <button type="button" className="editor-icon-btn" onClick={closeSelectionPopup} aria-label={t('common.close')}>
+              <X size={14} />
+            </button>
+          </div>
 
-              <div style={{ overflowY: 'auto', padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                {activeSuggestions.map((item, idx) => (
-                  <div
-                    key={item.id || idx}
-                    style={{
-                      padding: '0.75rem',
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      borderRadius: 'var(--radius-sm)',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '0.4rem'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                      <div style={{ display: 'flex', gap: '0.35rem' }}>
-                        <button
-                          onClick={() => reviewSuggestion(item)}
-                          className="m3-chip"
-                          style={{
-                            padding: '0.2rem 0.55rem',
-                            fontSize: '0.72rem',
-                            background: 'var(--accent-cyan-dim)',
-                            color: 'var(--accent-cyan)',
-                            borderColor: 'var(--accent-cyan)'
-                          }}
-                        >
-                          <ArrowRight size={12} /> Rivedi frase
-                        </button>
-                        <button
-                          onClick={() => dismissSuggestion(item)}
-                          style={{
-                            padding: '0.25rem 0.4rem',
-                            color: 'var(--text-muted)',
-                            background: 'transparent',
-                            border: 'none',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          <X size={13} />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Contextual Narrative Preview */}
-                    {item.contextSnippet && (
-                      <div 
-                        style={{
-                          fontFamily: 'var(--font-serif)',
-                          fontSize: '0.76rem',
-                          fontStyle: 'italic',
-                          color: 'var(--text-primary)',
-                          backgroundColor: 'var(--bg-primary)',
-                          padding: '0.35rem 0.65rem',
-                          borderRadius: 'var(--radius-xs)',
-                          borderLeft: '3px solid var(--accent-cyan)',
-                          lineHeight: 1.45
-                        }}
-                      >
-                        "{item.contextSnippet}"
-                      </div>
-                    )}
-
-                    {item.reason && (
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.73rem', margin: 0, lineHeight: 1.4 }}>
-                        {item.reason}
-                      </p>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {!isChapterRefinementActive && !isWholeChapterSelected && (
+            <div className="editor-quick-actions">
+              <button type="button" className="editor-action" onClick={() => handleRunEnhancement('pacingBoost')} disabled={isEnhancing}>
+                <Flame size={14} strokeWidth={1.75} /> {t('editor.pacingBoost')}
+              </button>
+              <button type="button" className="editor-action" onClick={() => handleRunEnhancement('showDontTell')} disabled={isEnhancing}>
+                <EyeOff size={14} strokeWidth={1.75} /> {t('editor.showDontTell')}
+              </button>
+              <button type="button" className="editor-action" onClick={() => handleRunEnhancement('dialogueSharp')} disabled={isEnhancing}>
+                <MessageSquare size={14} strokeWidth={1.75} /> {t('editor.dialogueSharp')}
+              </button>
             </div>
           )}
 
-          {/* Collapsed Actions Island (Material 3 Expressive) */}
-          {activeSuggestions.length === 0 && (
-            <div className="m3-cluster-island">
-              <button
-                type="button"
-                onClick={handleFormatForPublication}
-                title="Formatta il capitolo secondo gli standard editoriali (Ctrl+Shift+F)"
-                className="m3-cluster-btn"
-                style={{ fontSize: '0.74rem', padding: '0.34rem 0.72rem' }}
-              >
-                <Feather size={12} className="m3-icon-bounce" style={{ color: 'var(--accent-amber)' }} />
-                <span>Formatta</span>
-              </button>
+          {isEnhancing && (
+            <div role="status" className="editor-popup-status">
+              <RefreshCw size={13} className="animate-spin" />
+              <span>{t('editor.waitingProvider', { provider: providerName, seconds: enhancementElapsedSeconds })}</span>
+              <button type="button" className="editor-link-danger" onClick={() => enhancementAbortControllerRef.current?.abort()}>{t('common.cancel')}</button>
+            </div>
+          )}
 
-              <div className="m3-cluster-divider" />
+          {enhancementError && <p role="alert" className="editor-error">{enhancementError}</p>}
 
-              <button
-                type="button"
-                onClick={handleRunChapterRefinement}
-                disabled={isEnhancing || !(chapter?.content || '').trim()}
-                title="Rifinisci tutto il capitolo mantenendo trama, dettagli e voce narrativa"
-                className="m3-cluster-btn"
-                style={{
-                  fontSize: '0.74rem',
-                  padding: '0.34rem 0.72rem',
-                  color: 'var(--accent-cyan)',
-                  fontWeight: '600',
-                  opacity: isEnhancing ? 0.65 : 1
-                }}
-              >
-                <Sparkles size={12} className="m3-icon-bounce" />
-                <span>{isEnhancing && isChapterRefinementActive ? 'Rifinitura...' : 'Rifinisci'}</span>
-              </button>
+          {enhancedResult && (
+            <div className="editor-result">
+              {enhancedResult.mode === 'refinement' ? (
+                <div className="editor-compare-grid">
+                  <label className="editor-compare-label">
+                    {t('editor.original')}
+                    <textarea value={visibleSelectionRange.text} readOnly className="editor-compare-area editor-compare-tall" />
+                  </label>
+                  <label className="editor-compare-label editor-compare-label-accent">
+                    {t('editor.refinedEditable')}
+                    <textarea
+                      value={enhancedResult.improved}
+                      onChange={event => setEnhancedResult(current => ({ ...current, improved: event.target.value }))}
+                      className="editor-compare-area editor-compare-tall editor-compare-accent"
+                    />
+                  </label>
+                </div>
+              ) : (
+                <blockquote className="editor-result-quote">{enhancedResult.improved}</blockquote>
+              )}
+              {enhancedResult.explanation && <div className="editor-result-explanation">{enhancedResult.explanation}</div>}
+              <div className="editor-result-actions">
+                <button type="button" className="m3-btn m3-btn-text" onClick={() => setEnhancedResult(null)}>{t('common.cancel')}</button>
+                <button type="button" className="m3-btn m3-btn-filled" onClick={handleApplyEnhanced}>
+                  <Check size={14} /> {enhancedResult.mode === 'refinement' ? t('editor.applyRefinement') : t('editor.replaceInText')}
+                </button>
+              </div>
             </div>
           )}
         </div>
+      )}
 
-        {/* Dynamic & Configurable Line Indicator HUD (Material 3 Expressive & Monkeytype) */}
-        {settings.showLineHUD !== false && (
-          <>
-            {(!settings.lineHUDStyle || settings.lineHUDStyle === 'pill') && (
-              <div 
-                className="m3-line-hud"
-                title={`Posizione: Riga ${cursorLine} di ${totalLines} (${Math.round((cursorLine / Math.max(1, totalLines)) * 100)}%)`}
-              >
-                <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--accent-cyan)' }} />
-                <span>riga <strong style={{ color: 'var(--accent-cyan)' }}>{cursorLine}</strong> / {totalLines}</span>
-                <span style={{ opacity: 0.6, fontSize: '0.68rem', fontFamily: 'var(--font-mono)' }}>
-                  ({Math.round((cursorLine / Math.max(1, totalLines)) * 100)}%)
-                </span>
-              </div>
-            )}
+      {suggestionReview && (
+        <RewriteReviewDialog
+          review={{ ...suggestionReview, reason: suggestionReview.suggestion?.reason }}
+          onClose={() => setSuggestionReview(null)}
+          onChangeImproved={(improved) => setSuggestionReview(current => ({ ...current, improved }))}
+          onRequestAlternative={requestEditorAiAlternative}
+          onApply={applyReviewedSuggestion}
+        />
+      )}
 
-            {settings.lineHUDStyle === 'minimal' && (
-              <div 
-                style={{
-                  position: 'fixed',
-                  left: '1.75rem',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  zIndex: 30,
-                  opacity: 0.5,
-                  fontSize: '0.75rem',
-                  color: 'var(--accent-cyan)',
-                  fontFamily: 'var(--font-mono)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  userSelect: 'none'
-                }}
-              >
-                <div style={{ width: '12px', height: '1.5px', background: 'var(--accent-cyan)' }} />
-                <span>L. {cursorLine}</span>
+      {/* Real-time companion notes (only when there is something to say) */}
+      {activeSuggestions.length > 0 && !selectionRange && (
+        <div className={`editor-companion editor-floating ${isWriting ? 'editor-floating-hidden' : ''}`}>
+          <div className="ai-suggestion-card animate-fade-in">
+            <div className="ai-suggestion-head">
+              <div className="ai-suggestion-title">
+                <Sparkles size={14} />
+                <span>{t(activeSuggestions.length === 1 ? 'editor.companionOne' : 'editor.companionMany', { count: activeSuggestions.length })}</span>
               </div>
-            )}
-
-            {settings.lineHUDStyle === 'bar' && (
-              <div 
-                style={{
-                  position: 'fixed',
-                  left: '1.25rem',
-                  top: '25vh',
-                  height: '50vh',
-                  width: '4px',
-                  backgroundColor: 'var(--border-subtle)',
-                  borderRadius: '9999px',
-                  zIndex: 30,
-                  userSelect: 'none'
-                }}
-                title={`Progresso capitolo: ${Math.round((cursorLine / Math.max(1, totalLines)) * 100)}%`}
-              >
-                <div 
-                  style={{
-                    position: 'absolute',
-                    top: `${Math.min(96, Math.max(0, ((cursorLine - 1) / Math.max(1, totalLines - 1)) * 100))}%`,
-                    left: '-3px',
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--accent-cyan)',
-                    boxShadow: '0 0 10px var(--accent-cyan)',
-                    transition: 'top 0.15s ease'
-                  }}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </div>
+              <button type="button" className="editor-icon-btn" onClick={() => setActiveSuggestions([])} aria-label={t('editor.closeSuggestions')}>
+                <X size={15} />
+              </button>
+            </div>
+            <div className="ai-suggestion-list">
+              {activeSuggestions.map((item, idx) => (
+                <div key={item.id || `${item.original}-${idx}`} className={`ai-suggestion-item ${item === selectedSuggestion ? 'ai-suggestion-item-active' : ''}`}>
+                  {item.contextSnippet && <div className="ai-suggestion-snippet">{item.contextSnippet}</div>}
+                  {item.reason && <p className="ai-suggestion-reason">{item.reason}</p>}
+                  <div className="ai-suggestion-item-actions">
+                    <button type="button" onClick={() => dismissSuggestion(item)} className="editor-action editor-action-quiet">{t('editor.dismiss')}</button>
+                    <button type="button" onClick={() => reviewSuggestion(item)} className="editor-action editor-action-accent">
+                      {t('editor.reviewSentence')} <ArrowRight size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+});
+
+export default Editor;

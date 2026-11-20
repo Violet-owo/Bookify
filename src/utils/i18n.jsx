@@ -24,13 +24,13 @@ function resolveKey(dict, path) {
   return typeof current === 'string' ? current : null;
 }
 
-export function translate(key, lang = 'it', params = {}) {
+export function translate(key, lang = 'it', params = {}, fallback) {
   const primaryDict = dictionaries[lang] || dictionaries.it;
   let text = resolveKey(primaryDict, key);
-  
-  // Fallback to Italian or key
+
+  // Fallback: Italian dictionary, then the provided default, then the key itself
   if (text == null) {
-    text = resolveKey(dictionaries.it, key) || key;
+    text = resolveKey(dictionaries.it, key) ?? fallback ?? key;
   }
 
   // Parameter interpolation: {param}
@@ -48,7 +48,7 @@ export function I18nProvider({ language = 'it', onLanguageChange, children }) {
     const activeLang = language in dictionaries ? language : 'it';
     return {
       language: activeLang,
-      t: (key, params) => translate(key, activeLang, params),
+      t: (key, params, fallback) => translate(key, activeLang, params, fallback),
       setLanguage: (newLang) => {
         if (onLanguageChange && newLang in dictionaries) {
           onLanguageChange(newLang);

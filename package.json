@@ -1,7 +1,14 @@
 {
   "name": "bookify",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "Bookify — a cozy, distraction-free desktop studio for writing novels, with an AI literary editor (Claude, Gemini, OpenAI, Ollama).",
+  "author": "Violet M.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Violet-owo/Bookify.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +20,9 @@
     "tauri:build": "tauri build"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.11.0",
     "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-opener": "^2.7.3",
     "canvas-confetti": "^1.9.4",
     "lucide-react": "^1.49.0",
     "react": "^19.2.8",

@@ -1,759 +1,365 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  X, 
-  BookMarked, 
-  Target, 
-  User, 
-  Sparkles, 
-  Calendar, 
-  Layers, 
-  Check, 
-  FileText,
-  Palette,
-  Lock,
-  ArrowRight,
-  RefreshCw,
-  Lightbulb,
-  Tag,
-  Feather
-} from 'lucide-react';
+import { X, BookMarked, Target, Sparkles, Layers, Check, FileText, Lock, RefreshCw, Lightbulb, Tag, Feather } from 'lucide-react';
 import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
 import { suggestBookMetadata } from '../utils/aiService';
+import { useI18n } from '../utils/i18n';
+import { useFeedback } from './Feedback';
+import TabStrip from './TabStrip';
+import AiCircleLoader from './AiCircleLoader';
 
-const GENRES = [
-  'Thriller / Suspense',
-  'Giallo / Noir / Poliziesco',
-  'Fantascienza (Sci-Fi) / Distopico',
-  'Fantasy / High Fantasy',
-  'Romanzo Storico',
-  'Narrativa Contemporanea',
-  'Horror / Gotico / Psicologico',
-  'Romance / Drammatico',
-  'Avventura / Azione',
-  'Saggistica / Memorie'
-];
+const GENRE_KEYS = ['thriller', 'mystery', 'scifi', 'fantasy', 'historical', 'contemporary', 'horror', 'romance', 'adventure', 'nonfiction'];
+const MIN_WORDS_FOR_AI = 150;
+const countWords = (text) => (text || '').trim().split(/\s+/).filter(Boolean).length;
 
-export default function BookMetadataModal({
-  isOpen,
-  onClose,
-  book,
-  onUpdateBook,
-  settings = {}
-}) {
-  const duration = settings.animationDurationMs || 280;
+function toForm(book) {
+  return {
+    title: book?.title || '',
+    subtitle: book?.subtitle || '',
+    author: book?.author || '',
+    genre: book?.genre || '',
+    targetWords: book?.targetWords || 60000,
+    synopsis: book?.synopsis || book?.bible?.synopsis || '',
+    styleNotes: book?.styleNotes || ''
+  };
+}
+
+export default function BookMetadataModal({ isOpen, onClose, book, onUpdateBook, settings = {} }) {
+  const { t, language } = useI18n();
+  const { notify } = useFeedback();
+  const duration = settings.enableAnimations !== false ? settings.animationDurationMs || 280 : 0;
   const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, duration);
+  const locale = language === 'en' ? 'en-US' : 'it-IT';
 
-  const [activeTab, setActiveTab] = useState('main'); // 'main' | 'synopsis' | 'ai'
-  const [formData, setFormData] = useState({
-    title: '',
-    subtitle: '',
-    author: '',
-    genre: 'Thriller / Suspense',
-    targetWords: 60000,
-    synopsis: '',
-    styleNotes: '',
-    coverColor: '#d35400'
-  });
-
-  // AI Suggestions state
+  const [activeTab, setActiveTab] = useState('main');
+  const [formData, setFormData] = useState(() => toForm(book));
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState(null);
-  const [appliedFeedback, setAppliedFeedback] = useState('');
+
+  // Reset the form each time the dialog opens or the active book changes
+  useEffect(() => {
+    if (isOpen) setFormData(toForm(book));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, book?.id]);
 
   useEffect(() => {
-    if (book) {
-      setFormData({
-        title: book.title || '',
-        subtitle: book.subtitle || '',
-        author: book.author || 'Autore Indipendente',
-        genre: book.genre || 'Thriller / Suspense',
-        targetWords: book.targetWords || 60000,
-        synopsis: book.synopsis || book.bible?.synopsis || '',
-        styleNotes: book.styleNotes || '',
-        coverColor: book.coverColor || '#d35400'
-      });
-    }
-  }, [book, isOpen]);
+    setAiSuggestions(null);
+  }, [book?.id]);
 
-  if (!shouldRender) return null;
+  if (!shouldRender || !book) return null;
 
-  // Calculate total words in manuscript
-  const totalWords = (book?.chapters || []).reduce((acc, c) => {
-    return acc + (c.content ? c.content.trim().split(/\s+/).filter(Boolean).length : 0);
-  }, 0);
+  const genreOptions = GENRE_KEYS.map(key => t(`genres.${key}`));
+  if (formData.genre && !genreOptions.includes(formData.genre)) genreOptions.unshift(formData.genre);
 
-  const minWordsForAi = 150;
-  const hasEnoughWordsForAi = totalWords >= minWordsForAi;
-  const aiProgressPercent = Math.min(100, Math.round((totalWords / minWordsForAi) * 100));
-  const progressPercent = Math.min(100, Math.round((totalWords / Math.max(1000, formData.targetWords || 60000)) * 100));
+  const totalWords = (book.chapters || []).reduce((acc, c) => acc + countWords(c.content), 0);
+  const hasEnoughWordsForAi = totalWords >= MIN_WORDS_FOR_AI;
+  const aiProgressPercent = Math.min(100, Math.round((totalWords / MIN_WORDS_FOR_AI) * 100));
+  const target = Math.max(1000, Number(formData.targetWords) || 60000);
+  const progressPercent = Math.min(100, Math.round((totalWords / target) * 100));
+  const setField = (field, value) => setFormData(prev => ({ ...prev, [field]: value }));
 
   const handleGenerateAi = async () => {
     if (!hasEnoughWordsForAi) return;
     setIsGeneratingAi(true);
-    setAppliedFeedback('');
     try {
       const res = await suggestBookMetadata({ book, settings });
-      if (res.success) {
-        setAiSuggestions(res);
-      } else {
-        alert(res.message || 'Scrivi ancora un po\' di testo per consentire all\'AI di comprendere la trama.');
-      }
+      if (res.success) setAiSuggestions(res);
+      else notify(res.message || t('metadata.writeMore'), { tone: 'info' });
     } catch (err) {
       console.error('AI generation error:', err);
+      notify(err.message || t('metadata.aiFailed'), { tone: 'error' });
     } finally {
       setIsGeneratingAi(false);
     }
   };
 
-  const handleApplySingle = (field, value, label) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    setAppliedFeedback(`✓ ${label} applicato!`);
-    setTimeout(() => setAppliedFeedback(''), 3000);
+  const titleOf = (entry) => (typeof entry === 'string' ? entry : entry?.title || '');
+
+  const applySingle = (field, value, labelKey) => {
+    if (!value) return;
+    setField(field, value);
+    notify(t('metadata.applied', { field: t(labelKey) }), { tone: 'success' });
   };
 
   const handleApplyAllAi = () => {
     if (!aiSuggestions) return;
-    const firstTitle = typeof aiSuggestions.titles?.[0] === 'string'
-      ? aiSuggestions.titles[0]
-      : (aiSuggestions.titles?.[0]?.title || prev.title);
+    const firstTitle = titleOf(aiSuggestions.titles?.[0]);
     setFormData(prev => ({
       ...prev,
-      title: firstTitle,
+      title: firstTitle || prev.title,
       subtitle: aiSuggestions.tagline || prev.subtitle,
       synopsis: aiSuggestions.synopsis || prev.synopsis,
       genre: aiSuggestions.suggestedGenre || prev.genre,
       styleNotes: aiSuggestions.styleNotes || prev.styleNotes
     }));
-    setAppliedFeedback('✨ Tutti i suggerimenti AI sono stati applicati alla scheda!');
-    setTimeout(() => setAppliedFeedback(''), 4000);
+    notify(t('metadata.allApplied'), { tone: 'ai' });
   };
 
   const handleSubmit = (e) => {
     e?.preventDefault();
     onUpdateBook({
       ...formData,
-      updatedAt: new Date().toISOString()
+      title: formData.title.trim() || book.title,
+      targetWords: target
     });
+    notify(t('metadata.saved'), { tone: 'success' });
     onClose();
   };
 
+  const tabs = [
+    { id: 'main', icon: Layers, label: t('metadata.tabs.main') },
+    { id: 'synopsis', icon: FileText, label: t('metadata.tabs.synopsis') },
+    { id: 'ai', icon: Sparkles, label: hasEnoughWordsForAi ? t('metadata.tabs.ai') : t('metadata.tabs.aiLocked', { current: totalWords, min: MIN_WORDS_FOR_AI }), locked: !hasEnoughWordsForAi }
+  ];
+
   return (
-    <div 
-      className={`m3-modal-backdrop ${isExiting ? 'm3-modal-backdrop-exit' : ''}`}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        bottom: 0,
-        right: 0,
-        backgroundColor: 'rgba(10, 8, 6, 0.85)',
-        backdropFilter: 'blur(12px)',
-        zIndex: 260,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '1.5rem'
-      }}
-      onClick={onClose}
-    >
-      <div 
-        className={`glass-panel m3-dialog-panel ${isExiting ? 'm3-dialog-panel-exit' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: '760px',
-          maxWidth: '96vw',
-          maxHeight: '90vh',
-          backgroundColor: 'var(--bg-secondary)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--m3-shape-dialog, 24px)',
-          display: 'flex',
-          flexDirection: 'column',
-          boxShadow: '0 25px 65px rgba(0, 0, 0, 0.85)',
-          overflow: 'hidden'
-        }}
+    <div className={`m3-modal-backdrop bk-modal-backdrop ${isExiting ? 'm3-modal-backdrop-exit' : ''}`} onMouseDown={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="metadata-title"
+        className={`glass-panel m3-dialog-panel metadata-dialog ${isExiting ? 'm3-dialog-panel-exit' : ''}`}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Header with Icon Bounce */}
-        <div className="m3-dialog-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-            <div className="m3-dialog-icon-box">
-              <BookMarked size={22} className="m3-icon-bounce" />
-            </div>
+        <header className="m3-dialog-header">
+          <div className="bk-dialog-heading">
+            <div className="m3-dialog-icon-box"><BookMarked size={22} className="m3-icon-bounce" /></div>
             <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
-                Scheda Editoriale del Romanzo
-              </h2>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.2rem 0 0 0' }}>
-                Metadati narrativi, sinossi d'autore e suggerimenti dell'AI Companion.
-              </p>
+              <h2 id="metadata-title">{t('metadata.title')}</h2>
+              <p>{t('metadata.subtitle')}</p>
             </div>
           </div>
-          <button 
-            onClick={onClose} 
-            className="m3-dialog-close-btn"
-            title="Chiudi scheda (Esc)"
-          >
+          <button type="button" onClick={onClose} className="m3-dialog-close-btn" aria-label={t('common.close')} title={t('common.closeEsc')}>
             <X size={18} />
           </button>
-        </div>
+        </header>
 
-        {/* Tab Navigation with M3 Segmented Grid (No Horizontal Scroll) */}
-        <div style={{ padding: '0.75rem 1.75rem', borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-primary)' }}>
-          <div className="m3-segmented-grid m3-segmented-grid-3">
-            {[
-              { id: 'main', label: 'Dati & Metriche', icon: Layers },
-              { id: 'synopsis', label: 'Sinossi & Voce Narrativa', icon: FileText },
-              { 
-                id: 'ai', 
-                label: hasEnoughWordsForAi ? 'Suggerimenti AI (Sbloccato)' : `Suggerimenti AI (${totalWords}/${minWordsForAi})`, 
-                icon: Sparkles,
-                isHighlight: hasEnoughWordsForAi
-              }
-            ].map(tab => {
-              const Icon = tab.icon;
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`m3-segmented-tab ${isActive ? 'm3-segmented-tab-active' : ''}`}
-                >
-                  <Icon size={14} className="m3-icon-bounce" style={{ color: tab.isHighlight ? 'var(--accent-cyan)' : 'inherit' }} />
-                  <span>{tab.label}</span>
-                  {tab.id === 'ai' && !hasEnoughWordsForAi && (
-                    <Lock size={12} style={{ opacity: 0.6 }} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <nav className="settings-tabs">
+          <TabStrip active={activeTab} onChange={setActiveTab} tabs={tabs} />
+        </nav>
 
-        {/* Form Body */}
-        <form onSubmit={handleSubmit} style={{ flex: 1, overflowY: 'auto', padding: '1.75rem 2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          
-          {appliedFeedback && (
-            <div 
-              className="animate-fade-in"
-              style={{
-                padding: '0.65rem 1rem',
-                borderRadius: 'var(--radius-sm)',
-                backgroundColor: 'rgba(74, 222, 128, 0.15)',
-                border: '1px solid #4ade80',
-                color: '#4ade80',
-                fontSize: '0.82rem',
-                fontWeight: '600',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
-              }}
-            >
-              <Check size={16} />
-              <span>{appliedFeedback}</span>
-            </div>
-          )}
+        <form onSubmit={handleSubmit} className="metadata-form">
+          <div className="settings-body">
+            {activeTab === 'main' && (
+              <div key="main" className="m3-tab-content-fluid settings-stack">
+                <section className="settings-section">
+                  <div className="settings-section-head">
+                    <div className="settings-section-title"><Target size={16} /><h3>{t('metadata.progressTitle')}</h3></div>
+                    <span className="settings-usage-total">
+                      {totalWords.toLocaleString(locale)} / {target.toLocaleString(locale)} ({progressPercent}%)
+                    </span>
+                  </div>
+                  <div className="book-card-bar metadata-bar" role="progressbar" aria-valuenow={progressPercent} aria-valuemin={0} aria-valuemax={100}>
+                    <div style={{ width: `${progressPercent}%`, background: 'var(--accent-cyan)' }} />
+                  </div>
+                </section>
 
-          {/* TAB 1: MAIN METADATA & GOAL */}
-          {activeTab === 'main' && (
-            <div key="main" className="m3-tab-content-fluid" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              
-              {/* Manuscript Word Goal Banner */}
-              <div 
-                style={{ 
-                  padding: '1.1rem 1.35rem', 
-                  backgroundColor: 'var(--bg-elevated)', 
-                  borderRadius: 'var(--m3-shape-card, 16px)', 
-                  border: '1px solid var(--border-subtle)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.65rem'
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: '600', color: 'var(--text-primary)' }}>
-                    <Target size={16} style={{ color: 'var(--accent-cyan)' }} />
-                    Avanzamento Stesura del Romanzo
-                  </span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontWeight: '700', color: 'var(--accent-cyan)' }}>
-                    {totalWords.toLocaleString()} / {(formData.targetWords || 60000).toLocaleString()} parole ({progressPercent}%)
-                  </span>
-                </div>
-
-                {/* Progress bar track */}
-                <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '9999px', overflow: 'hidden' }}>
-                  <div 
-                    style={{ 
-                      width: `${progressPercent}%`, 
-                      height: '100%', 
-                      backgroundColor: 'var(--accent-cyan)', 
-                      borderRadius: '9999px',
-                      transition: 'width 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
-                    }} 
-                  />
-                </div>
-              </div>
-
-              {/* Title & Author */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                    Titolo del Romanzo *
+                <div className="metadata-grid metadata-grid-title">
+                  <label className="settings-field">
+                    <span className="settings-field-label">{t('metadata.bookTitle')} *</span>
+                    <input
+                      type="text"
+                      className="settings-input metadata-title-input"
+                      value={formData.title}
+                      onChange={(e) => setField('title', e.target.value)}
+                      placeholder={t('metadata.titlePlaceholder')}
+                    />
                   </label>
+                  <label className="settings-field">
+                    <span className="settings-field-label">{t('metadata.author')}</span>
+                    <input
+                      type="text"
+                      className="settings-input"
+                      value={formData.author}
+                      onChange={(e) => setField('author', e.target.value)}
+                      placeholder={t('metadata.authorPlaceholder')}
+                    />
+                  </label>
+                </div>
+
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('metadata.subtitleTagline')}</span>
                   <input
                     type="text"
-                    required
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    placeholder="es. Il Segreto della Cripta"
-                    style={{
-                      width: '100%',
-                      padding: '0.7rem 0.9rem',
-                      fontSize: '0.96rem',
-                      fontWeight: '700',
-                      fontFamily: 'var(--font-serif)',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)'
-                    }}
+                    className="settings-input"
+                    value={formData.subtitle}
+                    onChange={(e) => setField('subtitle', e.target.value)}
+                    placeholder={t('metadata.taglinePlaceholder')}
                   />
-                </div>
+                </label>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                    Autore / Pseudonimo
+                <div className="metadata-grid">
+                  <label className="settings-field">
+                    <span className="settings-field-label">{t('metadata.genre')}</span>
+                    <select className="settings-input" value={formData.genre} onChange={(e) => setField('genre', e.target.value)}>
+                      {!formData.genre && <option value="">—</option>}
+                      {genreOptions.map(g => <option key={g} value={g}>{g}</option>)}
+                    </select>
                   </label>
-                  <input
-                    type="text"
-                    value={formData.author}
-                    onChange={(e) => setFormData({ ...formData, author: e.target.value })}
-                    placeholder="Nome dell'autore"
-                    style={{
-                      width: '100%',
-                      padding: '0.7rem 0.9rem',
-                      fontSize: '0.88rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)'
-                    }}
+                  <label className="settings-field">
+                    <span className="settings-field-label">{t('metadata.targetWords')}</span>
+                    <input
+                      type="number"
+                      min="1000"
+                      max="500000"
+                      step="1000"
+                      className="settings-input settings-input-mono"
+                      value={formData.targetWords}
+                      onChange={(e) => setField('targetWords', e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'synopsis' && (
+              <div key="synopsis" className="m3-tab-content-fluid settings-stack">
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('metadata.synopsis')}</span>
+                  <textarea
+                    rows={7}
+                    className="settings-input bible-textarea metadata-textarea"
+                    value={formData.synopsis}
+                    onChange={(e) => setField('synopsis', e.target.value)}
+                    placeholder={t('metadata.synopsisPlaceholder')}
                   />
-                </div>
-              </div>
-
-              {/* Tagline / Subtitle */}
-              <div>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '0.45rem' }}>
-                  Sottotitolo o Tagline di Copertina
                 </label>
-                <input
-                  type="text"
-                  value={formData.subtitle}
-                  onChange={(e) => setFormData({ ...formData, subtitle: e.target.value })}
-                  placeholder="es. Una cospirazione millenaria. Un codice che nessuno avrebbe dovuto decifrare."
-                  style={{
-                    width: '100%',
-                    padding: '0.65rem 0.9rem',
-                    fontSize: '0.86rem',
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)'
-                  }}
-                />
-              </div>
-
-              {/* Genre & Target Words */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                    Genere Letterario Principale
-                  </label>
-                  <select
-                    value={formData.genre}
-                    onChange={(e) => setFormData({ ...formData, genre: e.target.value })}
-                    style={{
-                      width: '100%',
-                      padding: '0.65rem 0.9rem',
-                      fontSize: '0.86rem',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)'
-                    }}
-                  >
-                    {GENRES.map(g => (
-                      <option key={g} value={g}>{g}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                    Obiettivo Finale Parole
-                  </label>
-                  <input
-                    type="number"
-                    min="1000"
-                    max="500000"
-                    step="1000"
-                    value={formData.targetWords}
-                    onChange={(e) => setFormData({ ...formData, targetWords: parseInt(e.target.value) || 60000 })}
-                    style={{
-                      width: '100%',
-                      padding: '0.65rem 0.9rem',
-                      fontSize: '0.88rem',
-                      fontFamily: 'var(--font-mono)',
-                      borderRadius: 'var(--radius-sm)',
-                      backgroundColor: 'var(--bg-elevated)',
-                      border: '1px solid var(--border-subtle)',
-                      color: 'var(--text-primary)'
-                    }}
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('metadata.styleNotes')}</span>
+                  <textarea
+                    rows={4}
+                    className="settings-input bible-textarea metadata-textarea"
+                    value={formData.styleNotes}
+                    onChange={(e) => setField('styleNotes', e.target.value)}
+                    placeholder={t('metadata.styleNotesPlaceholder')}
                   />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 2: SYNOPSIS & STYLE NOTES */}
-          {activeTab === 'synopsis' && (
-            <div key="synopsis" className="m3-tab-content-fluid" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              <div>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                  Sinossi / Premessa & Conflitto Centrale del Romanzo
                 </label>
-                <textarea
-                  rows={6}
-                  value={formData.synopsis}
-                  onChange={(e) => setFormData({ ...formData, synopsis: e.target.value })}
-                  placeholder="Di cosa parla il romanzo? Qual è la situazione iniziale, quale evento rompe l'equilibrio, e qual è il dilemma morale o la minaccia che il protagonista affronta?"
-                  style={{
-                    width: '100%',
-                    padding: '0.85rem 1rem',
-                    fontSize: '0.86rem',
-                    lineHeight: 1.6,
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)',
-                    resize: 'vertical'
-                  }}
-                />
               </div>
+            )}
 
-              <div>
-                <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.45rem' }}>
-                  Note di Stile & Voce Narrativa (Guida per l'AI Companion)
-                </label>
-                <textarea
-                  rows={4}
-                  value={formData.styleNotes}
-                  onChange={(e) => setFormData({ ...formData, styleNotes: e.target.value })}
-                  placeholder="es. Terza persona limitata, ritmo incalzante da thriller contemporaneo, dialoghi serrati e asciutti, ricchezza di dettagli sensoriali nei momenti di tensione..."
-                  style={{
-                    width: '100%',
-                    padding: '0.75rem 1rem',
-                    fontSize: '0.84rem',
-                    lineHeight: 1.5,
-                    borderRadius: 'var(--radius-sm)',
-                    backgroundColor: 'var(--bg-elevated)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)',
-                    resize: 'vertical'
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          {/* TAB 3: AI NOVEL ASSISTANT (STRICT WORD THRESHOLD) */}
-          {activeTab === 'ai' && (
-            <div key="ai" className="m3-tab-content-fluid" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-              
-              {!hasEnoughWordsForAi ? (
-                /* LOCKED CARD: Insufficient Words */
-                <div 
-                  style={{
-                    padding: '1.75rem 2rem',
-                    backgroundColor: 'var(--bg-elevated)',
-                    borderRadius: 'var(--m3-shape-card, 20px)',
-                    border: '1.5px dashed var(--border-subtle)',
-                    textAlign: 'center',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    gap: '1rem'
-                  }}
-                >
-                  <div 
-                    style={{
-                      width: '52px',
-                      height: '52px',
-                      borderRadius: '50%',
-                      backgroundColor: 'rgba(229, 169, 83, 0.12)',
-                      color: 'var(--accent-amber)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      border: '1px solid rgba(229, 169, 83, 0.3)'
-                    }}
-                  >
-                    <Lock size={24} className="m3-icon-bounce" />
-                  </div>
-
-                  <div style={{ maxWidth: '480px' }}>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 0.4rem 0' }}>
-                      L'AI ha bisogno di leggere la tua storia per suggerirti titoli e sinossi
-                    </h3>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.55, margin: 0 }}>
-                      Per generare proposte coerenti, magnetiche e su misura per la tua voce, l'AI deve poter comprendere personaggi, atmosfera e trama dai capitoli che scrivi.
-                    </p>
-                  </div>
-
-                  {/* Words threshold progress */}
-                  <div style={{ width: '100%', maxWidth: '360px', marginTop: '0.5rem' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', marginBottom: '0.4rem' }}>
-                      <span style={{ color: 'var(--text-muted)' }}>Parole scritte nel manoscritto</span>
-                      <span style={{ fontWeight: '700', color: 'var(--accent-cyan)', fontFamily: 'var(--font-mono)' }}>
-                        {totalWords} / {minWordsForAi} parole ({aiProgressPercent}%)
-                      </span>
-                    </div>
-                    <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg-primary)', borderRadius: '9999px', overflow: 'hidden' }}>
-                      <div 
-                        style={{ 
-                          width: `${aiProgressPercent}%`, 
-                          height: '100%', 
-                          backgroundColor: 'var(--accent-cyan)', 
-                          borderRadius: '9999px',
-                          transition: 'width 0.4s ease'
-                        }} 
-                      />
-                    </div>
-                  </div>
-
-                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
-                    ✍️ Scrivi ancora {Math.max(0, minWordsForAi - totalWords)} parole nel tuo capitolo per sbloccare l'analisi automatica della storia.
-                  </p>
-                </div>
-              ) : (
-                /* UNLOCKED CARD: Generate Suggestions */
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                  
-                  {/* Action Banner */}
-                  <div 
-                    style={{
-                      padding: '1.25rem 1.5rem',
-                      backgroundColor: 'var(--bg-elevated)',
-                      borderRadius: 'var(--m3-shape-card, 16px)',
-                      border: '1px solid var(--accent-cyan-glow)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      flexWrap: 'wrap',
-                      gap: '1rem'
-                    }}
-                  >
+            {activeTab === 'ai' && (
+              <div key="ai" className="m3-tab-content-fluid settings-stack">
+                {!hasEnoughWordsForAi ? (
+                  <div className="metadata-locked">
+                    <div className="metadata-locked-icon"><Lock size={24} className="m3-icon-bounce" /></div>
                     <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                        <Sparkles size={16} style={{ color: 'var(--accent-cyan)' }} />
-                        <span>Manoscritto Pronto per l'Analisi AI ({totalWords} parole scritte)</span>
-                      </div>
-                      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.25rem 0 0 0' }}>
-                        L'AI estrarrà i personaggi, i conflitti e l'atmosfera per consigliarti 3 titoli, la tagline, la sinossi e il genere ideale.
-                      </p>
+                      <h3>{t('metadata.lockedTitle')}</h3>
+                      <p>{t('metadata.lockedDesc')}</p>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={handleGenerateAi}
-                      disabled={isGeneratingAi}
-                      className="m3-btn m3-btn-filled"
-                      style={{ padding: '0.55rem 1.15rem' }}
-                    >
-                      <RefreshCw size={15} className={`m3-icon-bounce ${isGeneratingAi ? 'animate-spin' : ''}`} />
-                      <span>{isGeneratingAi ? 'Analisi in corso...' : aiSuggestions ? 'Rigenera Idee' : 'Genera Suggerimenti con AI'}</span>
-                    </button>
+                    <div className="metadata-locked-progress">
+                      <div className="book-card-progress-head">
+                        <span>{t('metadata.wordsWritten')}</span>
+                        <strong>{totalWords} / {MIN_WORDS_FOR_AI} ({aiProgressPercent}%)</strong>
+                      </div>
+                      <div className="book-card-bar metadata-bar">
+                        <div style={{ width: `${aiProgressPercent}%`, background: 'var(--accent-cyan)' }} />
+                      </div>
+                    </div>
+                    <p className="metadata-locked-hint">{t('metadata.writeMoreCount', { count: Math.max(0, MIN_WORDS_FOR_AI - totalWords) })}</p>
                   </div>
-
-                  {/* AI Generated Content Cards */}
-                  {aiSuggestions && (
-                    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                      
-                      {/* Master Apply All */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <button
-                          type="button"
-                          onClick={handleApplyAllAi}
-                          className="m3-chip"
-                          style={{
-                            padding: '0.45rem 1rem',
-                            backgroundColor: 'var(--accent-cyan-dim)',
-                            color: 'var(--accent-cyan)',
-                            border: '1.5px solid var(--accent-cyan)',
-                            fontSize: '0.8rem',
-                            fontWeight: '700'
-                          }}
-                        >
-                          <Sparkles size={14} className="m3-icon-bounce" />
-                          <span>Applica Tutti i Suggerimenti alla Scheda</span>
-                        </button>
+                ) : (
+                  <>
+                    <section className="settings-section metadata-ai-banner">
+                      <div>
+                        <div className="settings-section-title"><Sparkles size={16} /><h3>{t('metadata.readyTitle', { count: totalWords.toLocaleString(locale) })}</h3></div>
+                        <p className="settings-section-desc" style={{ marginTop: '0.35rem' }}>{t('metadata.readyDesc')}</p>
                       </div>
+                      <button type="button" onClick={handleGenerateAi} disabled={isGeneratingAi} className="m3-btn m3-btn-filled">
+                        <RefreshCw size={15} className={isGeneratingAi ? 'animate-spin' : 'm3-icon-bounce'} />
+                        <span>{isGeneratingAi ? t('metadata.analyzing') : aiSuggestions ? t('metadata.regenerate') : t('metadata.generate')}</span>
+                      </button>
+                    </section>
 
-                      {/* 1. Title Proposals */}
-                      <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
-                          <Tag size={15} style={{ color: 'var(--accent-cyan)' }} />
-                          <span>3 Proposte di Titolo per il tuo Romanzo</span>
+                    {isGeneratingAi && !aiSuggestions && (
+                      <AiCircleLoader compact size={34} message={t('metadata.loaderMessage')} submessage={t('metadata.loaderSub')} />
+                    )}
+
+                    {aiSuggestions && (
+                      <div className="animate-fade-in settings-stack">
+                        <div className="metadata-apply-all">
+                          <button type="button" onClick={handleApplyAllAi} className="m3-btn m3-btn-tonal">
+                            <Sparkles size={14} className="m3-icon-bounce" />
+                            <span>{t('metadata.applyAll')}</span>
+                          </button>
                         </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-                          {aiSuggestions.titles.map((t, idx) => {
-                            const titleText = typeof t === 'string' ? t : (t?.title || `Proposta ${idx + 1}`);
-                            const styleText = t?.style || 'Narrativa';
-                            const reasonText = t?.reason || 'Adatto al tono del libro';
-                            return (
-                              <div 
-                                key={idx}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  padding: '0.75rem 1rem',
-                                  borderRadius: 'var(--radius-sm)',
-                                  backgroundColor: 'var(--bg-primary)',
-                                  border: '1px solid var(--border-subtle)'
-                                }}
-                              >
-                                <div>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                                    <span style={{ fontSize: '0.98rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)' }}>
-                                      «{titleText}»
-                                    </span>
-                                    <span style={{ fontSize: '0.68rem', padding: '0.15rem 0.5rem', borderRadius: 'var(--radius-full)', backgroundColor: 'var(--accent-cyan-dim)', color: 'var(--accent-cyan)', fontWeight: '600' }}>
-                                      {styleText}
-                                    </span>
+
+                        <section className="settings-section">
+                          <div className="settings-section-title"><Tag size={15} /><h3>{t('metadata.titleProposals')}</h3></div>
+                          <div className="metadata-title-list">
+                            {(aiSuggestions.titles || []).map((entry, idx) => {
+                              const titleText = titleOf(entry) || t('ai.proposal', { n: idx + 1 });
+                              return (
+                                <div key={idx} className="metadata-title-item">
+                                  <div style={{ minWidth: 0 }}>
+                                    <div className="metadata-title-row">
+                                      <span className="metadata-title-text">{titleText}</span>
+                                      {entry?.style && <span className="metadata-style-chip">{entry.style}</span>}
+                                    </div>
+                                    {entry?.reason && <p className="metadata-reason">{entry.reason}</p>}
                                   </div>
-                                  <p style={{ fontSize: '0.74rem', color: 'var(--text-muted)', margin: '0.2rem 0 0 0' }}>
-                                    {reasonText}
-                                  </p>
+                                  <button type="button" onClick={() => applySingle('title', titleText, 'metadata.fieldTitle')} className="m3-btn m3-btn-tonal metadata-use-btn">
+                                    {t('metadata.useTitle')}
+                                  </button>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleApplySingle('title', titleText, 'Titolo')}
-                                  className="m3-btn m3-btn-tonal"
-                                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.75rem' }}
-                                >
-                                  Usa Titolo
-                                </button>
+                              );
+                            })}
+                          </div>
+                        </section>
+
+                        {aiSuggestions.tagline && (
+                          <section className="settings-section">
+                            <div className="settings-section-head">
+                              <div className="settings-section-title"><Lightbulb size={15} style={{ color: 'var(--accent-amber)' }} /><h3>{t('metadata.taglineProposal')}</h3></div>
+                              <button type="button" onClick={() => applySingle('subtitle', aiSuggestions.tagline, 'metadata.fieldTagline')} className="m3-btn m3-btn-tonal metadata-use-btn">{t('metadata.useAsTagline')}</button>
+                            </div>
+                            <blockquote className="metadata-quote">{aiSuggestions.tagline}</blockquote>
+                          </section>
+                        )}
+
+                        {aiSuggestions.synopsis && (
+                          <section className="settings-section">
+                            <div className="settings-section-head">
+                              <div className="settings-section-title"><Feather size={15} /><h3>{t('metadata.synopsisProposal')}</h3></div>
+                              <button type="button" onClick={() => applySingle('synopsis', aiSuggestions.synopsis, 'metadata.fieldSynopsis')} className="m3-btn m3-btn-tonal metadata-use-btn">{t('metadata.useAsSynopsis')}</button>
+                            </div>
+                            <div className="metadata-synopsis">{aiSuggestions.synopsis}</div>
+                          </section>
+                        )}
+
+                        <div className="settings-two-col">
+                          {aiSuggestions.suggestedGenre && (
+                            <section className="settings-section">
+                              <div className="settings-section-head">
+                                <h3 className="metadata-small-title">{t('metadata.suggestedGenre')}</h3>
+                                <button type="button" onClick={() => applySingle('genre', aiSuggestions.suggestedGenre, 'metadata.fieldGenre')} className="m3-chip">{t('metadata.set')}</button>
                               </div>
-                            );
-                          })}
+                              <div className="metadata-genre">{aiSuggestions.suggestedGenre}</div>
+                            </section>
+                          )}
+                          {aiSuggestions.styleNotes && (
+                            <section className="settings-section">
+                              <div className="settings-section-head">
+                                <h3 className="metadata-small-title">{t('metadata.styleNotesShort')}</h3>
+                                <button type="button" onClick={() => applySingle('styleNotes', aiSuggestions.styleNotes, 'metadata.fieldStyle')} className="m3-chip">{t('metadata.set')}</button>
+                              </div>
+                              <div className="metadata-reason">{aiSuggestions.styleNotes}</div>
+                            </section>
+                          )}
                         </div>
                       </div>
-
-                      {/* 2. Tagline Proposal */}
-                      <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                            <Lightbulb size={15} style={{ color: 'var(--accent-amber)' }} />
-                            <span>Tagline di Copertina Suggerita</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleApplySingle('subtitle', aiSuggestions.tagline, 'Tagline')}
-                            className="m3-btn m3-btn-tonal"
-                            style={{ padding: '0.3rem 0.75rem', fontSize: '0.74rem' }}
-                          >
-                            Usa come Tagline
-                          </button>
-                        </div>
-                        <p style={{ fontSize: '0.88rem', fontStyle: 'italic', color: 'var(--text-primary)', margin: 0, padding: '0.75rem 1rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--radius-xs)' }}>
-                          "{aiSuggestions.tagline}"
-                        </p>
-                      </div>
-
-                      {/* 3. Synopsis Proposal */}
-                      <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.25rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                            <Feather size={15} style={{ color: 'var(--accent-cyan)' }} />
-                            <span>Sinossi / Premessa Narrativa</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleApplySingle('synopsis', aiSuggestions.synopsis, 'Sinossi')}
-                            className="m3-btn m3-btn-tonal"
-                            style={{ padding: '0.3rem 0.75rem', fontSize: '0.74rem' }}
-                          >
-                            Usa come Sinossi
-                          </button>
-                        </div>
-                        <div style={{ fontSize: '0.84rem', color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-line', padding: '0.85rem 1rem', backgroundColor: 'var(--bg-primary)', borderRadius: 'var(--radius-xs)' }}>
-                          {aiSuggestions.synopsis}
-                        </div>
-                      </div>
-
-                      {/* 4. Genre & Style Guidance */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-                        <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                            <span style={{ fontSize: '0.76rem', fontWeight: '700', color: 'var(--text-primary)' }}>Genere Suggerito</span>
-                            <button
-                              type="button"
-                              onClick={() => handleApplySingle('genre', aiSuggestions.suggestedGenre, 'Genere')}
-                              className="m3-chip"
-                              style={{ padding: '0.2rem 0.6rem', fontSize: '0.7rem' }}
-                            >
-                              Imposta
-                            </button>
-                          </div>
-                          <div style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--accent-cyan)' }}>
-                            {aiSuggestions.suggestedGenre}
-                          </div>
-                        </div>
-
-                        <div style={{ backgroundColor: 'var(--bg-elevated)', padding: '1.1rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-                            <span style={{ fontSize: '0.76rem', fontWeight: '700', color: 'var(--text-primary)' }}>Note di Stile</span>
-                            <button
-                              type="button"
-                              onClick={() => handleApplySingle('styleNotes', aiSuggestions.styleNotes, 'Note di stile')}
-                              className="m3-chip"
-                              style={{ padding: '0.2rem 0.6rem', fontSize: '0.7rem' }}
-                            >
-                              Imposta
-                            </button>
-                          </div>
-                          <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                            {aiSuggestions.styleNotes}
-                          </div>
-                        </div>
-                      </div>
-
-                    </div>
-                  )}
-
-                </div>
-              )}
-
-            </div>
-          )}
-
-          {/* Footer Actions */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '0.75rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              className="m3-btn m3-btn-text"
-            >
-              Annulla
-            </button>
-            <button
-              type="submit"
-              className="m3-btn m3-btn-filled"
-            >
-              <Check size={16} className="m3-icon-bounce" />
-              <span>Salva Modifiche</span>
-            </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
+
+          <footer className="bk-dialog-footer">
+            <button type="button" onClick={onClose} className="m3-btn m3-btn-text">{t('common.cancel')}</button>
+            <button type="submit" className="m3-btn m3-btn-filled">
+              <Check size={16} className="m3-icon-bounce" />
+              <span>{t('metadata.saveChanges')}</span>
+            </button>
+          </footer>
         </form>
       </div>
     </div>

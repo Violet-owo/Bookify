@@ -1,793 +1,744 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
-  loadLibrary, 
-  saveLibrary, 
-  loadSettings, 
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useAnimatedVisibility } from './utils/useAnimatedVisibility';
+import {
+  loadLibrary,
+  saveLibrary,
+  loadSettings,
   saveSettings,
   duplicateBook
 } from './utils/storage';
-import { 
-  saveProjectToDiskFile, 
-  openProjectFromDiskFile, 
-  autosaveToConnectedDisk, 
-  getActiveConnectedFileName 
+import {
+  saveProjectToDiskFile,
+  openProjectFromDiskFile,
+  linkBookToFile,
+  autosaveToConnectedDisk,
+  getConnectedFileName,
+  migrateLegacyFileLink,
+  disconnectBookFile
 } from './utils/fileSync';
+import { dismissSplash, toggleAppFullscreen } from './utils/desktop';
 import { audioEngine } from './utils/audioEngine';
 import TopBar from './components/TopBar';
 import Editor from './components/Editor';
 import BottomBar from './components/BottomBar';
-import ChapterDrawer from './components/ChapterDrawer';
+import Sidebar from './components/Sidebar';
 import ChapterReviewModal from './components/ChapterReviewModal';
 import SettingsModal from './components/SettingsModal';
 import BookshelfModal from './components/BookshelfModal';
 import NovelBibleModal from './components/NovelBibleModal';
 import BookMetadataModal from './components/BookMetadataModal';
+import { FeedbackProvider, useFeedback } from './components/Feedback';
 import confetti from 'canvas-confetti';
-import { I18nProvider } from './utils/i18n';
+import { FileDown } from 'lucide-react';
+import { I18nProvider, useI18n } from './utils/i18n';
+
+const countWords = (text) => (text || '').trim().split(/\s+/).filter(Boolean).length;
+const now = () => new Date().toISOString();
+
+function themeColor(name, fallback) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
 
 export default function App() {
-  const [library, setLibrary] = useState(loadLibrary);
   const [settings, setSettings] = useState(loadSettings);
 
-  // Active book lookup
+  const updateSettings = useCallback((updater) => {
+    setSettings((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      saveSettings(next);
+      return next;
+    });
+  }, []);
+
+  const handleLanguageChange = useCallback((language) => {
+    updateSettings((prev) => ({ ...prev, language }));
+  }, [updateSettings]);
+
+  return (
+    <I18nProvider language={settings.language || 'it'} onLanguageChange={handleLanguageChange}>
+      <FeedbackProvider>
+        <Studio settings={settings} updateSettings={updateSettings} />
+      </FeedbackProvider>
+    </I18nProvider>
+  );
+}
+
+function Studio({ settings, updateSettings }) {
+  const { t } = useI18n();
+  const { notify, confirm } = useFeedback();
+
+  const [library, setLibrary] = useState(loadLibrary);
+  const libraryRef = useRef(library);
+  libraryRef.current = library;
+
   const activeBook = (library?.books || []).find(b => b.id === library?.activeBookId) || library?.books?.[0];
 
-  // Active chapter id state
-  const [currentChapterId, setCurrentChapterId] = useState(() => {
-    return activeBook?.currentChapterId || activeBook?.chapters?.[0]?.id || 'chap-1';
-  });
+  const [currentChapterId, setCurrentChapterId] = useState(
+    () => activeBook?.currentChapterId || activeBook?.chapters?.[0]?.id || 'chap-1'
+  );
 
-  // Modal / Drawer open states
+  // Modal / drawer visibility
   const [isBookshelfOpen, setIsBookshelfOpen] = useState(false);
   const [isBibleOpen, setIsBibleOpen] = useState(false);
-  const [isChapterDrawerOpen, setIsChapterDrawerOpen] = useState(false);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isBookMetadataOpen, setIsBookMetadataOpen] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isDragHover, setIsDragHover] = useState(false);
+
+  // Saving state
   const [isAutosaving, setIsAutosaving] = useState(false);
-
-  // Autosave and Disk File Sync state
-  const [lastSavedTime, setLastSavedTime] = useState(new Date());
-  const [connectedFileName, setConnectedFileName] = useState(getActiveConnectedFileName);
-  const [saveToast, setSaveToast] = useState(null);
-
-  // Autosave timer ref
+  const [lastSavedTime, setLastSavedTime] = useState(null);
+  const [fileLinkVersion, setFileLinkVersion] = useState(0);
+  const connectedFileName = getConnectedFileName(activeBook?.id);
   const autosaveTimerRef = useRef(null);
+  const diskDirtyRef = useRef(false);
+  const storageWarningShownRef = useRef(false);
 
-  // Active Writing & Immersive UI Auto-Hide state
+  // Writing activity (immersive auto-hide)
   const [isWriting, setIsWriting] = useState(false);
   const writingTimerRef = useRef(null);
   const lastMousePosRef = useRef({ x: 0, y: 0 });
 
-  const isAnyModalOpen = isBookshelfOpen || isBibleOpen || isChapterDrawerOpen || isReviewModalOpen || isSettingsOpen || isBookMetadataOpen;
+  const isAnyModalOpen = isBookshelfOpen || isBibleOpen || isReviewModalOpen || isSettingsOpen || isBookMetadataOpen;
 
+  // Sidebar: docked on wide windows, a sliding sheet on narrow ones
+  const editorRef = useRef(null);
+  const [isRefining, setIsRefining] = useState(false);
+  const [caret, setCaret] = useState({ line: 1, total: 1 });
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [sidebarSheetOpen, setSidebarSheetOpen] = useState(false);
+  const isNarrow = viewportWidth < 1100;
+  const sidebarPinned = settings.sidebarOpen !== false;
+  const sidebarMode = isNarrow ? (sidebarSheetOpen ? 'sheet' : 'hidden') : (sidebarPinned ? 'docked' : 'hidden');
+  const motionMs = settings.enableAnimations !== false ? Number(settings.animationDurationMs) || 280 : 0;
+  const sheet = useAnimatedVisibility(isNarrow && sidebarSheetOpen, Math.round(motionMs * 1.4));
+  const workspaceRef = useRef(null);
+  const workspaceLeftRef = useRef(null);
+
+  // FLIP: the workspace reflows once, then glides into place (GPU transform only)
+  useLayoutEffect(() => {
+    const el = workspaceRef.current;
+    if (!el) return;
+    const left = el.getBoundingClientRect().left;
+    const previous = workspaceLeftRef.current;
+    workspaceLeftRef.current = left;
+    if (previous === null || previous === left || !motionMs) return;
+    el.animate(
+      [{ transform: `translateX(${previous - left}px)` }, { transform: 'translateX(0)' }],
+      { duration: Math.round(motionMs * 2), easing: 'cubic-bezier(0.2, 0.9, 0.1, 1)' }
+    );
+  }, [sidebarPinned, isNarrow, motionMs]);
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isNarrow) setSidebarSheetOpen(false);
+  }, [isNarrow]);
+
+  const toggleSidebar = useCallback(() => {
+    if (window.innerWidth < 1100) setSidebarSheetOpen(open => !open);
+    else updateSettings(prev => ({ ...prev, sidebarOpen: prev.sidebarOpen === false }));
+  }, [updateSettings]);
+
+  const handleCaretChange = useCallback((next) => {
+    setCaret(prev => (prev.line === next.line && prev.total === next.total ? prev : next));
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Startup
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    dismissSplash();
+    migrateLegacyFileLink(libraryRef.current.activeBookId).then(() => setFileLinkVersion(v => v + 1));
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', settings.theme || 'parchment');
+    document.documentElement.lang = settings.language || 'it';
+  }, [settings.theme, settings.language]);
+
+  useEffect(() => {
+    const ms = settings.enableAnimations !== false ? Number(settings.animationDurationMs) || 280 : 0;
+    document.documentElement.style.setProperty('--anim-duration', `${ms}ms`);
+    // Every animation in the app scales with this factor (280 ms = 1)
+    document.documentElement.style.setProperty('--motion-scale', String(ms / 280));
+  }, [settings.enableAnimations, settings.animationDurationMs]);
+
+  // ---------------------------------------------------------------------------
+  // Immersive UI: hide chrome while typing, reveal on mouse movement
+  // ---------------------------------------------------------------------------
   const handleWritingActivity = useCallback(() => {
     if (isAnyModalOpen) return;
     setIsWriting(true);
-    if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
-    writingTimerRef.current = setTimeout(() => {
-      setIsWriting(false);
-    }, 1600);
+    clearTimeout(writingTimerRef.current);
+    writingTimerRef.current = setTimeout(() => setIsWriting(false), 1600);
   }, [isAnyModalOpen]);
 
-  // Window mouse movement reveals UI immediately
   useEffect(() => {
     const handleMouseMove = (e) => {
       const dx = Math.abs(e.clientX - lastMousePosRef.current.x);
       const dy = Math.abs(e.clientY - lastMousePosRef.current.y);
       if (dx > 4 || dy > 4) {
         lastMousePosRef.current = { x: e.clientX, y: e.clientY };
-        if (writingTimerRef.current) {
-          clearTimeout(writingTimerRef.current);
-        }
+        clearTimeout(writingTimerRef.current);
         setIsWriting(false);
       }
     };
-
     window.addEventListener('mousemove', handleMouseMove, { passive: true });
     return () => {
       window.removeEventListener('mousemove', handleMouseMove);
-      if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
+      clearTimeout(writingTimerRef.current);
     };
   }, []);
 
-  // Ensure UI is visible whenever any modal or drawer is active
-  useEffect(() => {
-    if (isAnyModalOpen) {
-      if (writingTimerRef.current) clearTimeout(writingTimerRef.current);
-      setIsWriting(false);
-    }
-  }, [isAnyModalOpen]);
-
   const isUIWritingHidden = (settings.autoHideUIOnType ?? true) && isWriting && !isAnyModalOpen;
 
-  // Current active chapter object
   const currentChapter = activeBook?.chapters?.find(c => c.id === currentChapterId) || activeBook?.chapters?.[0] || {
     id: 'chap-1',
-    title: 'Capitolo 1',
+    title: t('app.defaultChapterTitle', { n: 1 }),
     content: ''
   };
 
-  // Sync theme attribute to HTML root
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', settings.theme || 'parchment');
-  }, [settings.theme]);
-
-  // Save to Disk File (Manual / Ctrl+S)
-  const handleSaveToDisk = useCallback(async () => {
-    if (!activeBook) return;
-    setIsAutosaving(true);
-    try {
-      const res = await saveProjectToDiskFile(activeBook);
-      if (res.success) {
-        setConnectedFileName(res.fileName);
-        setLastSavedTime(new Date());
-        setSaveToast(`${res.isDirectDisk ? 'Salvato' : 'Scaricato'}: "${res.fileName}"`);
-        setTimeout(() => setSaveToast(null), 3500);
-      }
-    } catch (error) {
-      console.error('Errore salvataggio progetto:', error);
-      setSaveToast(`Salvataggio non riuscito: ${error.message || 'errore sconosciuto'}`);
-      setTimeout(() => setSaveToast(null), 5000);
-    } finally {
-      setIsAutosaving(false);
+  // ---------------------------------------------------------------------------
+  // Persistence
+  // ---------------------------------------------------------------------------
+  const persistLocally = useCallback((lib) => {
+    const ok = saveLibrary(lib);
+    if (!ok && !storageWarningShownRef.current) {
+      storageWarningShownRef.current = true;
+      notify(t('app.storageFull'), { tone: 'error', duration: 12000 });
     }
-  }, [activeBook]);
+    return ok;
+  }, [notify, t]);
 
-  // Autosave trigger with debounce
-  const triggerAutosave = useCallback((updatedLibrary) => {
+  /** Debounced local save after each edit; the disk file is written by the autosave interval. */
+  const scheduleSave = useCallback((updatedLibrary) => {
     setIsAutosaving(true);
-    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
-    autosaveTimerRef.current = setTimeout(async () => {
-      saveLibrary(updatedLibrary);
-      const currBook = updatedLibrary.books.find(b => b.id === updatedLibrary.activeBookId);
-      if (currBook) {
-        await autosaveToConnectedDisk(currBook);
-      }
+    diskDirtyRef.current = true;
+    clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      autosaveTimerRef.current = null;
+      persistLocally(updatedLibrary);
       setLastSavedTime(new Date());
       setIsAutosaving(false);
     }, 600);
+  }, [persistLocally]);
+
+  /** Apply a change to the library, save it and schedule the autosave. */
+  const commitLibrary = useCallback((updater, { immediate = false } = {}) => {
+    setLibrary((prev) => {
+      const next = updater(prev);
+      if (next === prev) return prev;
+      if (immediate) {
+        persistLocally(next);
+        diskDirtyRef.current = true;
+      } else {
+        scheduleSave(next);
+      }
+      return next;
+    });
+  }, [persistLocally, scheduleSave]);
+
+  const updateActiveBook = useCallback((mutate, options) => {
+    commitLibrary((prev) => ({
+      ...prev,
+      books: prev.books.map((b) => (b.id === prev.activeBookId ? { ...mutate(b), updatedAt: now() } : b))
+    }), options);
+  }, [commitLibrary]);
+
+  // Periodic autosave of the active book to its own file on disk
+  useEffect(() => {
+    if (settings.autosaveEnabled === false) return undefined;
+    const seconds = Number(settings.autosaveIntervalSeconds ?? 30);
+    if (!seconds || seconds <= 0) return undefined;
+    const timer = setInterval(async () => {
+      if (!diskDirtyRef.current) return;
+      const lib = libraryRef.current;
+      const book = lib.books.find(b => b.id === lib.activeBookId);
+      if (!book || !getConnectedFileName(book.id)) return;
+      diskDirtyRef.current = false;
+      const ok = await autosaveToConnectedDisk(book);
+      if (ok) setLastSavedTime(new Date());
+      else diskDirtyRef.current = true;
+    }, seconds * 1000);
+    return () => clearInterval(timer);
+  }, [settings.autosaveEnabled, settings.autosaveIntervalSeconds]);
+
+  // Never lose the last keystrokes when the window closes
+  useEffect(() => {
+    const flush = () => {
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+        saveLibrary(libraryRef.current);
+      }
+    };
+    window.addEventListener('beforeunload', flush);
+
+    // Desktop: also write pending changes to the linked .bookify file before closing
+    let unlisten = () => {};
+    let disposed = false;
+    if (window.__TAURI_INTERNALS__) {
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        const win = getCurrentWindow();
+        return win.onCloseRequested(async (event) => {
+          flush();
+          const lib = libraryRef.current;
+          const book = lib.books.find(b => b.id === lib.activeBookId);
+          if (!diskDirtyRef.current || !book || !getConnectedFileName(book.id)) return;
+          event.preventDefault();
+          try {
+            await autosaveToConnectedDisk(book);
+          } finally {
+            diskDirtyRef.current = false;
+            await win.destroy();
+          }
+        });
+      }).then((fn) => {
+        if (disposed) fn?.();
+        else if (fn) unlisten = fn;
+      }).catch((err) => console.warn('Close handler not installed:', err));
+    }
+
+    return () => {
+      disposed = true;
+      unlisten();
+      window.removeEventListener('beforeunload', flush);
+    };
   }, []);
 
-  // Configurable periodic autosave interval
-  useEffect(() => {
-    if (!settings.autosaveEnabled || !settings.autosaveIntervalSeconds || settings.autosaveIntervalSeconds <= 0) return;
-    const intervalMs = settings.autosaveIntervalSeconds * 1000;
-    const timer = setInterval(async () => {
-      saveLibrary(library);
-      if (activeBook) {
-        await autosaveToConnectedDisk(activeBook);
+  const handleSaveToDisk = useCallback(async ({ chooseNewFile = false } = {}) => {
+    const lib = libraryRef.current;
+    const book = lib.books.find(b => b.id === lib.activeBookId) || lib.books[0];
+    if (!book) return;
+    setIsAutosaving(true);
+    try {
+      persistLocally(lib);
+      const res = await saveProjectToDiskFile(book, { chooseNewFile });
+      if (res.success) {
+        diskDirtyRef.current = false;
+        setFileLinkVersion(v => v + 1);
+        setLastSavedTime(new Date());
+        notify(t(res.isDirectDisk ? 'app.savedTo' : 'app.downloaded', { file: res.fileName }), { tone: 'success' });
       }
-      setLastSavedTime(new Date());
-    }, intervalMs);
-    return () => clearInterval(timer);
-  }, [settings.autosaveEnabled, settings.autosaveIntervalSeconds, library, activeBook]);
+    } catch (error) {
+      console.error('Errore salvataggio progetto:', error);
+      notify(t('app.saveFailed', { error: error.message || error }), { tone: 'error' });
+    } finally {
+      setIsAutosaving(false);
+    }
+  }, [notify, persistLocally, t]);
 
-  // Open .bookify or .json Project File from PC Disk
-  const handleOpenProjectFromDisk = async () => {
+  // ---------------------------------------------------------------------------
+  // Opening files (dialog, browser drop, native drop)
+  // ---------------------------------------------------------------------------
+  const handleImportLibrary = useCallback((newLibrary) => {
+    const books = (newLibrary.books || []).filter(b => b && Array.isArray(b.chapters));
+    if (!books.length) return;
+    const activeBookId = books.some(b => b.id === newLibrary.activeBookId) ? newLibrary.activeBookId : books[0].id;
+    const next = { activeBookId, books };
+    setLibrary(next);
+    persistLocally(next);
+    const active = books.find(b => b.id === activeBookId);
+    setCurrentChapterId(active.currentChapterId || active.chapters[0]?.id || 'chap-1');
+  }, [persistLocally]);
+
+  const importProjectData = useCallback(async (data, fileName, source) => {
+    if (data && Array.isArray(data.chapters) && data.title) {
+      const book = { ...data, id: data.id || `book-${Date.now()}` };
+      if (!book.chapters.length) {
+        book.chapters = [{ id: `chap-${Date.now()}`, title: t('app.defaultChapterTitle', { n: 1 }), order: 1, content: '', updatedAt: now() }];
+      }
+      commitLibrary((prev) => {
+        const exists = prev.books.some(b => b.id === book.id);
+        return {
+          ...prev,
+          activeBookId: book.id,
+          books: exists ? prev.books.map(b => (b.id === book.id ? book : b)) : [book, ...prev.books]
+        };
+      }, { immediate: true });
+      setCurrentChapterId(book.currentChapterId && book.chapters.some(c => c.id === book.currentChapterId) ? book.currentChapterId : book.chapters[0].id);
+      await linkBookToFile(book.id, source);
+      setFileLinkVersion(v => v + 1);
+      notify(t('app.bookOpened', { title: book.title, file: fileName }), { tone: 'success' });
+      return;
+    }
+    if (data && Array.isArray(data.books)) {
+      const ok = await confirm({
+        title: t('app.restoreTitle'),
+        message: t('app.restoreMessage', { incoming: data.books.length, current: libraryRef.current.books.length }),
+        confirmLabel: t('app.restoreConfirm'),
+        danger: true
+      });
+      if (!ok) return;
+      handleImportLibrary(data);
+      notify(t('app.libraryImported', { file: fileName }), { tone: 'success' });
+      return;
+    }
+    notify(t('app.invalidProject'), { tone: 'error' });
+  }, [commitLibrary, confirm, handleImportLibrary, notify, t]);
+
+  const handleOpenProjectFromDisk = useCallback(async () => {
     try {
       const res = await openProjectFromDiskFile();
-      if (!res || !res.success || !res.data) return;
-
-      const data = res.data;
-      const openedFileName = res.fileName || 'progetto.bookify';
-
-      // Case A: Single Book / Novel (.bookify)
-      if (data.chapters && data.title) {
-        setLibrary((prev) => {
-          const existingIndex = prev.books.findIndex(b => b.id === data.id);
-          let updatedBooks;
-          if (existingIndex >= 0) {
-            updatedBooks = prev.books.map(b => b.id === data.id ? data : b);
-          } else {
-            updatedBooks = [data, ...prev.books];
-          }
-          const updated = {
-            ...prev,
-            activeBookId: data.id,
-            books: updatedBooks
-          };
-          saveLibrary(updated);
-          return updated;
-        });
-
-        const nextChapId = data.currentChapterId || data.chapters[0]?.id || 'chap-1';
-        setCurrentChapterId(nextChapId);
-        setConnectedFileName(openedFileName);
-        setSaveToast(`📖 Romanzo aperto con successo: "${data.title}" (${openedFileName})`);
-        setTimeout(() => setSaveToast(null), 4000);
-      }
-      // Case B: Entire Library Backup (.json)
-      else if (Array.isArray(data.books)) {
-        handleImportLibrary(data);
-        setConnectedFileName(openedFileName);
-        setSaveToast(`📚 Biblioteca importata con successo da: "${openedFileName}"`);
-        setTimeout(() => setSaveToast(null), 4000);
-      } else {
-        alert('Il file aperto non contiene una struttura di romanzo .bookify valida.');
-      }
+      if (!res?.success) return;
+      await importProjectData(res.data, res.fileName || 'progetto.bookify', res.source);
     } catch (err) {
       console.error('Errore apertura file:', err);
-      alert('Impossibile aprire il file selezionato: ' + (err.message || 'formato non valido'));
+      notify(t('app.openFailed', { error: err.message || err }), { tone: 'error' });
     }
-  };
+  }, [importProjectData, notify, t]);
 
-  // Switch Active Book
-  const handleSelectBook = (bookId) => {
+  // Drag & drop of .bookify / .json files (HTML5: native Tauri drop is disabled so
+  // that dragging selected text inside the editor keeps working on Windows)
+  useEffect(() => {
+    const isFileDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('Files');
+    const handleDragOver = (e) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      setIsDragHover(true);
+    };
+    const handleDragLeave = (e) => {
+      if (e.relatedTarget === null) setIsDragHover(false);
+    };
+    const handleDrop = async (e) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      setIsDragHover(false);
+      const file = e.dataTransfer.files?.[0];
+      if (!file) return;
+      if (!/\.(bookify|json)$/i.test(file.name)) {
+        notify(t('app.dropWrongType'), { tone: 'error' });
+        return;
+      }
+      try {
+        await importProjectData(JSON.parse(await file.text()), file.name, null);
+      } catch (err) {
+        notify(t('app.openFailed', { error: err.message || err }), { tone: 'error' });
+      }
+    };
+
+    window.addEventListener('dragover', handleDragOver);
+    window.addEventListener('dragleave', handleDragLeave);
+    window.addEventListener('drop', handleDrop);
+
+    return () => {
+      window.removeEventListener('dragover', handleDragOver);
+      window.removeEventListener('dragleave', handleDragLeave);
+      window.removeEventListener('drop', handleDrop);
+    };
+  }, [importProjectData, notify, t]);
+
+  // ---------------------------------------------------------------------------
+  // Library & book operations
+  // ---------------------------------------------------------------------------
+  const flushPendingDiskSave = useCallback(async () => {
+    const lib = libraryRef.current;
+    const book = lib.books.find(b => b.id === lib.activeBookId);
+    if (diskDirtyRef.current && book && settings.autosaveEnabled !== false) {
+      diskDirtyRef.current = false;
+      await autosaveToConnectedDisk(book);
+    }
+  }, [settings.autosaveEnabled]);
+
+  const handleSelectBook = async (bookId) => {
     const targetBook = library.books.find(b => b.id === bookId);
-    if (!targetBook) return;
-
-    const nextChapId = targetBook.currentChapterId || targetBook.chapters[0]?.id || 'chap-1';
-    setCurrentChapterId(nextChapId);
-
-    setLibrary((prev) => {
-      const updated = {
-        ...prev,
-        activeBookId: bookId
-      };
-      saveLibrary(updated);
-      return updated;
-    });
+    if (!targetBook || bookId === library.activeBookId) return;
+    await flushPendingDiskSave();
+    setCurrentChapterId(targetBook.currentChapterId || targetBook.chapters[0]?.id || 'chap-1');
+    commitLibrary((prev) => ({ ...prev, activeBookId: bookId }), { immediate: true });
+    diskDirtyRef.current = false;
   };
 
-  // Create Book
-  const handleCreateBook = (newBook) => {
-    setLibrary((prev) => {
-      const updated = {
-        activeBookId: newBook.id,
-        books: [newBook, ...prev.books]
-      };
-      saveLibrary(updated);
-      return updated;
-    });
+  const handleCreateBook = async (newBook) => {
+    await flushPendingDiskSave();
+    commitLibrary((prev) => ({ activeBookId: newBook.id, books: [newBook, ...prev.books] }), { immediate: true });
+    diskDirtyRef.current = false;
     setCurrentChapterId(newBook.chapters[0]?.id || 'chap-1');
   };
 
-  // Duplicate Book
   const handleDuplicateBook = (sourceBook) => {
     const duplicated = duplicateBook(sourceBook);
-    setLibrary((prev) => {
-      const updated = {
-        ...prev,
-        books: [duplicated, ...prev.books]
-      };
-      saveLibrary(updated);
-      return updated;
-    });
+    commitLibrary((prev) => ({ ...prev, books: [duplicated, ...prev.books] }), { immediate: true });
+    notify(t('app.bookDuplicated', { title: duplicated.title }), { tone: 'success' });
   };
 
-  // Delete Book
   const handleDeleteBook = (bookId) => {
-    if (library.books.length <= 1) return;
-    setLibrary((prev) => {
-      const remaining = prev.books.filter(b => b.id !== bookId);
-      const nextActiveId = prev.activeBookId === bookId ? remaining[0].id : prev.activeBookId;
-      const updated = {
-        activeBookId: nextActiveId,
-        books: remaining
-      };
-      saveLibrary(updated);
-      
+    const lib = libraryRef.current;
+    if (lib.books.length <= 1) return;
+    const remaining = lib.books.filter(b => b.id !== bookId);
+    const nextActiveId = lib.activeBookId === bookId ? remaining[0].id : lib.activeBookId;
+    if (lib.activeBookId === bookId) {
       const nextBook = remaining.find(b => b.id === nextActiveId);
-      if (nextBook) {
-        setCurrentChapterId(nextBook.currentChapterId || nextBook.chapters[0]?.id || 'chap-1');
-      }
-      return updated;
-    });
-  };
-
-  // Import whole library backup
-  const handleImportLibrary = (newLibrary) => {
-    setLibrary(newLibrary);
-    saveLibrary(newLibrary);
-    const active = newLibrary.books.find(b => b.id === newLibrary.activeBookId) || newLibrary.books[0];
-    if (active) {
-      setCurrentChapterId(active.currentChapterId || active.chapters[0]?.id || 'chap-1');
+      setCurrentChapterId(nextBook.currentChapterId || nextBook.chapters[0]?.id || 'chap-1');
+      diskDirtyRef.current = false;
     }
+    commitLibrary(() => ({ activeBookId: nextActiveId, books: remaining }), { immediate: true });
+    disconnectBookFile(bookId).then(() => setFileLinkVersion(v => v + 1));
   };
 
-  // Update content of active chapter
+  // Remember the chapter the author is on, per book
+  const handleSelectChapter = (chapId) => {
+    setCurrentChapterId(chapId);
+    updateActiveBook((b) => ({ ...b, currentChapterId: chapId }));
+  };
+
   const handleUpdateContent = (newContent, newTitle = null) => {
-    setLibrary((prevLib) => {
-      const updatedBooks = prevLib.books.map((b) => {
-        if (b.id === prevLib.activeBookId) {
-          const updatedChapters = (b.chapters || []).map((chap) => {
-            if (chap.id === currentChapterId) {
-              const oldWordCount = (chap.content || '').trim().split(/\s+/).filter(Boolean).length;
-              const newWordCount = (newContent || '').trim().split(/\s+/).filter(Boolean).length;
+    const goal = Number(settings.wordGoal) || 0;
+    if (goal > 0 && countWords(newContent) >= goal && countWords(currentChapter.content) < goal) {
+      try {
+        confetti({
+          particleCount: 85,
+          spread: 75,
+          origin: { y: 0.6 },
+          colors: [themeColor('--accent-cyan', '#e5a953'), themeColor('--accent-green', '#7da87b'), themeColor('--accent-amber', '#e5a953')],
+          disableForReducedMotion: true
+        });
+      } catch { /* decorative only */ }
+      notify(t('app.goalReached', { goal: goal.toLocaleString() }), { tone: 'success' });
+    }
 
-              // Milestone Celebration: reached word goal!
-              if (newWordCount >= settings.wordGoal && oldWordCount < settings.wordGoal) {
-                try {
-                  confetti({
-                    particleCount: 85,
-                    spread: 75,
-                    origin: { y: 0.6 },
-                    colors: ['#e5a953', '#7da87b', '#38bdf8']
-                  });
-                } catch {}
-              }
-
-              return {
-                ...chap,
-                content: newContent,
-                title: newTitle !== null ? newTitle : chap.title,
-                updatedAt: new Date().toISOString()
-              };
-            }
-            return chap;
-          });
-
-          return {
-            ...b,
-            chapters: updatedChapters,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return b;
-      });
-
-      const updated = { ...prevLib, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
+    const chapterId = currentChapter.id;
+    updateActiveBook((b) => ({
+      ...b,
+      chapters: (b.chapters || []).map((chap) => (chap.id === chapterId
+        ? { ...chap, content: newContent, title: newTitle !== null ? newTitle : chap.title, updatedAt: now() }
+        : chap))
+    }));
   };
 
-  // Update Book Title
-  const handleUpdateBookTitle = (newTitle) => {
-    setLibrary((prev) => {
-      const updatedBooks = prev.books.map(b => {
-        if (b.id === prev.activeBookId) {
-          return { ...b, title: newTitle, updatedAt: new Date().toISOString() };
-        }
-        return b;
-      });
-      const updated = { ...prev, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
-  };
+  const handleUpdateBookMetadata = (fields) => updateActiveBook((b) => ({ ...b, ...fields }));
+  const handleUpdateBible = (newBible) => updateActiveBook((b) => ({ ...b, bible: newBible }));
 
-  // Update Full Book Metadata (Title, Author, Genre, Synopsis, TargetWords)
-  const handleUpdateBookMetadata = (updatedFields) => {
-    setLibrary((prev) => {
-      const updatedBooks = prev.books.map(b => {
-        if (b.id === prev.activeBookId) {
-          return { ...b, ...updatedFields, updatedAt: new Date().toISOString() };
-        }
-        return b;
-      });
-      const updated = { ...prev, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
-  };
-
-  // Update Novel Bible (Characters, Plot Beats, Lore)
-  const handleUpdateBible = (newBible) => {
-    setLibrary((prev) => {
-      const updatedBooks = prev.books.map(b => {
-        if (b.id === prev.activeBookId) {
-          return { ...b, bible: newBible, updatedAt: new Date().toISOString() };
-        }
-        return b;
-      });
-      const updated = { ...prev, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
-  };
-
-  // Add Chapter to active book
   const handleAddChapter = () => {
     const newIndex = (activeBook.chapters || []).length + 1;
     const newChapId = `chap-${Date.now()}`;
     const newChap = {
       id: newChapId,
-      title: `Capitolo ${newIndex}: Nuovo Capitolo`,
+      title: t('app.newChapterTitle', { n: newIndex }),
       order: newIndex,
       content: '',
-      updatedAt: new Date().toISOString()
+      updatedAt: now()
     };
-
-    setLibrary((prev) => {
-      const updatedBooks = prev.books.map(b => {
-        if (b.id === prev.activeBookId) {
-          return {
-            ...b,
-            chapters: [...b.chapters, newChap],
-            currentChapterId: newChapId,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return b;
-      });
-      const updated = { ...prev, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
+    updateActiveBook((b) => ({ ...b, chapters: [...b.chapters, newChap], currentChapterId: newChapId }));
     setCurrentChapterId(newChapId);
   };
 
-  // Delete Chapter from active book
   const handleDeleteChapter = (chapId) => {
-    if ((activeBook.chapters || []).length <= 1) return;
-
-    setLibrary((prev) => {
-      const updatedBooks = prev.books.map(b => {
-        if (b.id === prev.activeBookId) {
-          const remaining = b.chapters.filter(c => c.id !== chapId);
-          const nextCurrentId = currentChapterId === chapId ? remaining[0].id : currentChapterId;
-          setCurrentChapterId(nextCurrentId);
-          return {
-            ...b,
-            chapters: remaining,
-            currentChapterId: nextCurrentId,
-            updatedAt: new Date().toISOString()
-          };
-        }
-        return b;
-      });
-      const updated = { ...prev, books: updatedBooks };
-      triggerAutosave(updated);
-      return updated;
-    });
+    const chapters = activeBook.chapters || [];
+    if (chapters.length <= 1) return;
+    const remaining = chapters.filter(c => c.id !== chapId);
+    const nextCurrentId = currentChapterId === chapId ? remaining[0].id : currentChapterId;
+    setCurrentChapterId(nextCurrentId);
+    updateActiveBook((b) => ({
+      ...b,
+      chapters: b.chapters.filter(c => c.id !== chapId),
+      currentChapterId: nextCurrentId
+    }));
   };
 
-  // Append cliffhanger to active chapter
   const handleAppendCliffhanger = (cliffhangerText) => {
-    if (!currentChapter) return;
     const current = currentChapter.content || '';
-    const updated = current.trim() + '\n\n' + cliffhangerText;
-    handleUpdateContent(updated);
+    handleUpdateContent(`${current.trimEnd()}\n\n${cliffhangerText}`);
   };
 
-  // Apply fix from review modal
   const handleApplyFix = (orig, fix, start, end, targetChapterId = currentChapter?.id) => {
-    if (!activeBook || !targetChapterId) return;
+    if (!activeBook || !targetChapterId) return false;
+    const chapter = activeBook.chapters.find(c => c.id === targetChapterId);
+    const content = chapter?.content || '';
+    if (content.slice(start, end) !== orig) return false;
+    const nextContent = content.slice(0, start) + fix + content.slice(end);
     if (targetChapterId === currentChapter?.id) {
-      const content = currentChapter.content || '';
-      if (content.slice(start, end) !== orig) return;
-      handleUpdateContent(content.slice(0, start) + fix + content.slice(end));
-      return;
-    }
-
-    setLibrary(previous => {
-      let didUpdate = false;
-      const books = previous.books.map(book => {
-        if (book.id !== activeBook.id) return book;
-        const chapters = (book.chapters || []).map(chapter => {
-          const content = chapter.content || '';
-          if (chapter.id !== targetChapterId || content.slice(start, end) !== orig) return chapter;
-          didUpdate = true;
-          return {
-            ...chapter,
-            content: content.slice(0, start) + fix + content.slice(end),
-            updatedAt: new Date().toISOString()
-          };
-        });
-        return didUpdate ? { ...book, chapters, updatedAt: new Date().toISOString() } : book;
-      });
-      if (!didUpdate) return previous;
-      const updated = { ...previous, books };
-      triggerAutosave(updated);
-      return updated;
-    });
-  };
-
-  // Toggle settings
-  const handleToggleSetting = (key, value) => {
-    setSettings((prev) => {
-      const updated = { ...prev, [key]: value };
-      saveSettings(updated);
-      return updated;
-    });
-  };
-
-  // Toggle fullscreen
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
+      handleUpdateContent(nextContent);
     } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen().catch(() => {});
-        setIsFullscreen(false);
-      }
+      updateActiveBook((b) => ({
+        ...b,
+        chapters: b.chapters.map(c => (c.id === targetChapterId ? { ...c, content: nextContent, updatedAt: now() } : c))
+      }));
     }
+    return true;
   };
 
-  // Dynamic Material 3 Expressive motion duration
-  useEffect(() => {
-    const dur = settings.enableAnimations !== false ? `${settings.animationDurationMs || 280}ms` : '0ms';
-    document.documentElement.style.setProperty('--anim-duration', dur);
-  }, [settings.enableAnimations, settings.animationDurationMs]);
+  const handleToggleSetting = (key, value) => updateSettings((prev) => ({ ...prev, [key]: value }));
 
-  // Global Keyboard Shortcuts (Ctrl & Function keys)
-  useEffect(() => {
-    const handleGlobalKeys = (e) => {
-      // F11: Fullscreen / Zen mode
-      if (e.key === 'F11') {
-        e.preventDefault();
-        toggleFullscreen();
-      }
-
-      // Ctrl / Cmd shortcuts
-      if (e.ctrlKey || e.metaKey) {
-        const key = e.key.toLowerCase();
-        
-        // Ctrl+S: Salva su File PC / Download
-        if (key === 's') {
-          e.preventDefault();
-          handleSaveToDisk();
-        }
-        // Ctrl+O: Apri file .bookify o .json dal PC
-        else if (key === 'o') {
-          e.preventDefault();
-          handleOpenProjectFromDisk();
-        }
-        // Ctrl+R: Stanza dell'Editor AI / Revisione
-        else if (key === 'r') {
-          e.preventDefault();
-          setIsReviewModalOpen(prev => !prev);
-        }
-        // Ctrl+B: Bibbia del Romanzo
-        else if (key === 'b') {
-          e.preventDefault();
-          setIsBibleOpen(prev => !prev);
-        }
-        // Ctrl+I: Scheda Romanzo & Metadati
-        else if (key === 'i') {
-          e.preventDefault();
-          setIsBookMetadataOpen(prev => !prev);
-        }
-        // Ctrl+J / Ctrl+K: Cassetto Capitoli
-        else if (key === 'j' || key === 'k') {
-          e.preventDefault();
-          setIsChapterDrawerOpen(prev => !prev);
-        }
-        // Ctrl+L: Biblioteca / Bookshelf
-        else if (key === 'l') {
-          e.preventDefault();
-          setIsBookshelfOpen(prev => !prev);
-        }
-        // Ctrl+,: Impostazioni Studio
-        else if (e.key === ',') {
-          e.preventDefault();
-          setIsSettingsOpen(prev => !prev);
-        }
-      }
-
-      // Alt shortcuts (backward compatibility)
-      if (e.altKey) {
-        const key = e.key.toLowerCase();
-        if (key === 'b' || key === 'l') {
-          e.preventDefault();
-          setIsBookshelfOpen(prev => !prev);
-        } else if (key === 'n') {
-          e.preventDefault();
-          setIsBibleOpen(prev => !prev);
-        } else if (key === 'r') {
-          e.preventDefault();
-          setIsReviewModalOpen(prev => !prev);
-        } else if (key === 'o') {
-          e.preventDefault();
-          setIsChapterDrawerOpen(prev => !prev);
-        } else if (key === 'i') {
-          e.preventDefault();
-          setIsBookMetadataOpen(prev => !prev);
-        } else if (e.key === ',') {
-          e.preventDefault();
-          setIsSettingsOpen(prev => !prev);
-        }
-      }
-
-      // Escape: Close all modals
-      if (e.key === 'Escape') {
-        setIsBookshelfOpen(false);
-        setIsBibleOpen(false);
-        setIsChapterDrawerOpen(false);
-        setIsReviewModalOpen(false);
-        setIsSettingsOpen(false);
-        setIsBookMetadataOpen(false);
-      }
-    };
-
-    window.addEventListener('keydown', handleGlobalKeys);
-    return () => window.removeEventListener('keydown', handleGlobalKeys);
-  }, [activeBook, library, handleSaveToDisk]);
-
-  // Drag and Drop support for .bookify and .json files
-  useEffect(() => {
-    const handleDragOver = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-    };
-
-    const handleDrop = async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
-
-      if (!file.name.endsWith('.bookify') && !file.name.endsWith('.json')) {
-        alert('Trascina un file con estensione .bookify o .json');
-        return;
-      }
-
-      try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-
-        if (parsed.chapters && parsed.title) {
-          setLibrary((prev) => {
-            const existingIndex = prev.books.findIndex(b => b.id === parsed.id);
-            let updatedBooks;
-            if (existingIndex >= 0) {
-              updatedBooks = prev.books.map(b => b.id === parsed.id ? parsed : b);
-            } else {
-              updatedBooks = [parsed, ...prev.books];
-            }
-            const updated = {
-              ...prev,
-              activeBookId: parsed.id,
-              books: updatedBooks
-            };
-            saveLibrary(updated);
-            return updated;
-          });
-          const nextChapId = parsed.currentChapterId || parsed.chapters[0]?.id || 'chap-1';
-          setCurrentChapterId(nextChapId);
-          setConnectedFileName(file.name);
-          setSaveToast(`📖 Romanzo caricato: "${parsed.title}" (${file.name})`);
-          setTimeout(() => setSaveToast(null), 4000);
-        } else if (Array.isArray(parsed.books)) {
-          handleImportLibrary(parsed);
-          setConnectedFileName(file.name);
-          setSaveToast(`📚 Biblioteca caricata: "${file.name}"`);
-          setTimeout(() => setSaveToast(null), 4000);
-        } else {
-          alert('Il file trascinato non contiene dati di progetto validi.');
-        }
-      } catch (err) {
-        alert('Impossibile aprire il file trascinato: ' + err.message);
-      }
-    };
-
-    window.addEventListener('dragover', handleDragOver);
-    window.addEventListener('drop', handleDrop);
-    return () => {
-      window.removeEventListener('dragover', handleDragOver);
-      window.removeEventListener('drop', handleDrop);
-    };
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      setIsFullscreen(await toggleAppFullscreen());
+    } catch (err) {
+      console.warn('Fullscreen non disponibile:', err);
+    }
   }, []);
 
-  // Update audio volume, profile, and ambient sound on settings change
-  useEffect(() => {
-    audioEngine.setVolume(settings.soundVolume);
-    audioEngine.setEnabled(settings.soundEnabled);
-    if (settings.soundProfile) {
-      audioEngine.setProfile(settings.soundProfile);
-    }
-    if (settings.ambientTrack) {
-      audioEngine.startAmbient(settings.ambientTrack);
-    }
-    if (settings.ambientVolume !== undefined) {
-      audioEngine.setAmbientVolume(settings.ambientVolume);
-    }
-  }, [
-    settings.soundVolume, 
-    settings.soundEnabled, 
-    settings.soundProfile, 
-    settings.ambientTrack, 
-    settings.ambientVolume
-  ]);
-
-  // Fullscreen change listener
   useEffect(() => {
     const handleFsChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
+      if (!window.__TAURI_INTERNALS__) setIsFullscreen(!!document.fullscreenElement);
     };
     document.addEventListener('fullscreenchange', handleFsChange);
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Global keyboard shortcuts
+  // ---------------------------------------------------------------------------
+  const shortcutHandlersRef = useRef({});
+  shortcutHandlersRef.current = { handleSaveToDisk, handleOpenProjectFromDisk, toggleFullscreen, toggleSidebar, isFullscreen, isAnyModalOpen, sidebarSheetOpen };
+
+  useEffect(() => {
+    const handleGlobalKeys = (e) => {
+      const h = shortcutHandlersRef.current;
+      if (e.defaultPrevented) return;
+
+      if (e.key === 'F11') {
+        e.preventDefault();
+        h.toggleFullscreen();
+        return;
+      }
+
+      if (e.ctrlKey || e.metaKey) {
+        const key = e.key.toLowerCase();
+        const toggles = {
+          r: setIsReviewModalOpen,
+          b: setIsBibleOpen,
+          i: setIsBookMetadataOpen,
+          l: setIsBookshelfOpen,
+          ',': setIsSettingsOpen
+        };
+        if (key === 's' && !e.shiftKey) {
+          e.preventDefault();
+          h.handleSaveToDisk();
+        } else if (key === 's' && e.shiftKey) {
+          e.preventDefault();
+          h.handleSaveToDisk({ chooseNewFile: true });
+        } else if (key === 'o') {
+          e.preventDefault();
+          h.handleOpenProjectFromDisk();
+        } else if (key === 'j' || key === 'k') {
+          e.preventDefault();
+          h.toggleSidebar();
+        } else if (toggles[key]) {
+          e.preventDefault();
+          toggles[key](prev => !prev);
+        }
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        if (h.isAnyModalOpen) {
+          setIsBookshelfOpen(false);
+          setIsBibleOpen(false);
+          setIsReviewModalOpen(false);
+          setIsSettingsOpen(false);
+          setIsBookMetadataOpen(false);
+        } else if (h.sidebarSheetOpen) {
+          setSidebarSheetOpen(false);
+        } else if (h.isFullscreen) {
+          h.toggleFullscreen();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalKeys);
+    return () => window.removeEventListener('keydown', handleGlobalKeys);
+  }, []);
+
+  // Audio engine follows the settings
+  useEffect(() => {
+    audioEngine.setVolume(settings.soundVolume);
+    audioEngine.setEnabled(settings.soundEnabled);
+    if (settings.soundProfile) audioEngine.setProfile(settings.soundProfile);
+    if (settings.ambientTrack) audioEngine.startAmbient(settings.ambientTrack);
+    if (settings.ambientVolume !== undefined) audioEngine.setAmbientVolume(settings.ambientVolume);
+  }, [settings.soundVolume, settings.soundEnabled, settings.soundProfile, settings.ambientTrack, settings.ambientVolume]);
+
+  void fileLinkVersion; // re-render trigger when a file gets (dis)connected
+
+  const closeSheet = () => setSidebarSheetOpen(false);
+  const openFromSidebar = (open) => () => {
+    closeSheet();
+    open(true);
+  };
+
   return (
-    <I18nProvider
-      language={settings.language || 'it'}
-      onLanguageChange={(newLang) => {
-        handleToggleSetting('language', newLang);
-      }}
-    >
-      <div 
-        className="bookify-app"
-        style={{
-          width: '100%',
-          height: '100vh',
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'relative',
-          overflow: 'hidden'
-        }}
-      >
-      {/* Save Toast Notification */}
-      {saveToast && (
-        <div 
-          className="glass-panel animate-fade-in"
-          style={{
-            position: 'fixed',
-            top: '3.75rem',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 150,
-            padding: '0.65rem 1.4rem',
-            backgroundColor: 'var(--bg-elevated)',
-            border: '1px solid var(--accent-cyan)',
-            borderRadius: 'var(--radius-full)',
-            color: 'var(--text-primary)',
-            fontSize: '0.82rem',
-            fontWeight: '600',
-            boxShadow: '0 10px 30px rgba(0, 0, 0, 0.7)'
-          }}
-        >
-          {saveToast}
-        </div>
+    <div className={`bookify-app sidebar-${sidebarMode}`}>
+      {(!isNarrow || sheet.shouldRender) && (
+        <>
+          {isNarrow && <div className={`sidebar-scrim ${sheet.isExiting ? 'is-exiting' : ''}`} onMouseDown={closeSheet} aria-hidden="true" />}
+          <Sidebar
+            mode={isNarrow ? 'sheet' : 'docked'}
+            collapsed={!isNarrow && !sidebarPinned}
+            exiting={isNarrow && sheet.isExiting}
+            book={activeBook}
+            currentChapterId={currentChapter.id}
+            onSelectChapter={(id) => {
+              handleSelectChapter(id);
+              closeSheet();
+            }}
+            onAddChapter={handleAddChapter}
+            onDeleteChapter={handleDeleteChapter}
+            onOpenBookshelf={openFromSidebar(setIsBookshelfOpen)}
+            onOpenBible={openFromSidebar(setIsBibleOpen)}
+            onOpenMetadata={openFromSidebar(setIsBookMetadataOpen)}
+            onOpenReview={openFromSidebar(setIsReviewModalOpen)}
+            onOpenSettings={openFromSidebar(setIsSettingsOpen)}
+            onCollapse={toggleSidebar}
+            isWriting={isUIWritingHidden && sidebarMode === 'docked'}
+          />
+        </>
       )}
 
-      {/* Studio TopBar (Clean & Visible by default, hides gracefully while typing) */}
-      <TopBar
-        book={activeBook}
-        currentChapter={currentChapter}
-        onOpenBookshelf={() => setIsBookshelfOpen(true)}
-        onOpenChapters={() => setIsChapterDrawerOpen(true)}
-        onOpenBible={() => setIsBibleOpen(true)}
-        onOpenReview={() => setIsReviewModalOpen(true)}
-        onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenBookMetadata={() => setIsBookMetadataOpen(true)}
-        settings={settings}
-        onToggleSetting={handleToggleSetting}
-        isAutosaving={isAutosaving}
-        lastSavedTime={lastSavedTime}
-        connectedFileName={connectedFileName}
-        onSaveToDisk={handleSaveToDisk}
-        onOpenFileFromDisk={handleOpenProjectFromDisk}
-        isFullscreen={isFullscreen}
-        onToggleFullscreen={toggleFullscreen}
-        isWriting={isUIWritingHidden}
-      />
-
-      {/* Main Distraction-Free Literary Editor Area */}
-      <main style={{ flex: 1, height: '100%', overflow: 'hidden', position: 'relative' }}>
-        <Editor
-          chapter={currentChapter}
-          onUpdateContent={handleUpdateContent}
-          settings={settings}
+      <div className="workspace" ref={workspaceRef}>
+        <TopBar
           book={activeBook}
-          onUpdateBible={handleUpdateBible}
-          onOpenReview={() => setIsReviewModalOpen(true)}
-          onOpenBible={() => setIsBibleOpen(true)}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          onSaveToDisk={handleSaveToDisk}
-          onWritingActivity={handleWritingActivity}
+          currentChapter={currentChapter}
+          sidebarVisible={sidebarMode === 'docked'}
+          onToggleSidebar={toggleSidebar}
+          onOpenBookshelf={() => setIsBookshelfOpen(true)}
+          settings={settings}
+          onToggleSetting={handleToggleSetting}
+          isAutosaving={isAutosaving}
+          lastSavedTime={lastSavedTime}
+          connectedFileName={connectedFileName}
+          onSaveToDisk={() => handleSaveToDisk()}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
+          onFormat={() => editorRef.current?.format()}
+          onRefine={() => editorRef.current?.refine()}
+          isRefining={isRefining}
+          isWriting={isUIWritingHidden}
         />
-      </main>
 
-      {/* Studio BottomBar (Clean & Visible by default, hides gracefully while typing) */}
-      <BottomBar
-        currentChapter={currentChapter}
-        settings={settings}
-        lastSavedTime={lastSavedTime}
-        connectedFileName={connectedFileName}
-        onSaveToDisk={handleSaveToDisk}
-        onOpenFileFromDisk={handleOpenProjectFromDisk}
-        onToggleFullscreen={toggleFullscreen}
-        onOpenReview={() => setIsReviewModalOpen(true)}
-        onOpenBible={() => setIsBibleOpen(true)}
-        isWriting={isUIWritingHidden}
-      />
+        <main className="bookify-main">
+          <Editor
+            ref={editorRef}
+            chapter={currentChapter}
+            onUpdateContent={handleUpdateContent}
+            settings={settings}
+            book={activeBook}
+            onUpdateBible={handleUpdateBible}
+            onWritingActivity={handleWritingActivity}
+            onCursorChange={handleCaretChange}
+            onRefiningChange={setIsRefining}
+            isWriting={isUIWritingHidden}
+          />
+        </main>
 
-      {/* Book Metadata & Editorial Info Modal */}
+        <BottomBar
+          currentChapter={currentChapter}
+          settings={settings}
+          connectedFileName={connectedFileName}
+          onSaveToDisk={() => handleSaveToDisk()}
+          onToggleSound={() => handleToggleSetting('soundEnabled', settings.soundEnabled === false)}
+          cursorLine={caret.line}
+          totalLines={caret.total}
+          isWriting={isUIWritingHidden}
+        />
+      </div>
+
       <BookMetadataModal
         isOpen={isBookMetadataOpen}
         onClose={() => setIsBookMetadataOpen(false)}
@@ -796,7 +747,6 @@ export default function App() {
         settings={settings}
       />
 
-      {/* Bookshelf Modal (Multi-Book Library) */}
       <BookshelfModal
         isOpen={isBookshelfOpen}
         onClose={() => setIsBookshelfOpen(false)}
@@ -806,11 +756,9 @@ export default function App() {
         onCreateBook={handleCreateBook}
         onDuplicateBook={handleDuplicateBook}
         onDeleteBook={handleDeleteBook}
-        onImportLibrary={handleImportLibrary}
         onOpenFileFromDisk={handleOpenProjectFromDisk}
       />
 
-      {/* Novel Bible Modal (Characters, Lore, Plot Beats) */}
       <NovelBibleModal
         isOpen={isBibleOpen}
         onClose={() => setIsBibleOpen(false)}
@@ -819,20 +767,6 @@ export default function App() {
         onUpdateBible={handleUpdateBible}
       />
 
-      {/* Chapters & Sessions Drawer */}
-      <ChapterDrawer
-        isOpen={isChapterDrawerOpen}
-        onClose={() => setIsChapterDrawerOpen(false)}
-        book={activeBook}
-        settings={settings}
-        currentChapterId={currentChapterId}
-        onSelectChapter={setCurrentChapterId}
-        onAddChapter={handleAddChapter}
-        onDeleteChapter={handleDeleteChapter}
-        onUpdateBookTitle={handleUpdateBookTitle}
-      />
-
-      {/* Bestseller Editor Room Modal */}
       <ChapterReviewModal
         isOpen={isReviewModalOpen}
         onClose={() => setIsReviewModalOpen(false)}
@@ -843,19 +777,21 @@ export default function App() {
         onAppendCliffhanger={handleAppendCliffhanger}
       />
 
-      {/* Settings Modal (Theme, Audio Akko & Ambience, AI Provider, Autosave & PC File) */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         connectedFileName={connectedFileName}
-        onSaveToDisk={handleSaveToDisk}
-        onUpdateSettings={(updated) => {
-          setSettings(updated);
-          saveSettings(updated);
-        }}
+        onSaveToDisk={() => handleSaveToDisk({ chooseNewFile: Boolean(connectedFileName) })}
+        onUpdateSettings={updateSettings}
       />
+
+      {isDragHover && (
+        <div className="bk-drop-overlay" aria-hidden="true">
+          <FileDown size={42} />
+          <span>{t('app.dropHint')}</span>
+        </div>
+      )}
     </div>
-    </I18nProvider>
   );
 }

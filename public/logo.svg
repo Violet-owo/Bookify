@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <linearGradient id="bg" x1="0.08" y1="0" x2="0.92" y2="1">
+      <stop offset="0" stop-color="#FFC27A"/>
+      <stop offset="0.42" stop-color="#F2706B"/>
+      <stop offset="1" stop-color="#6C4BFF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.25" cy="0.18" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.38"/>
+      <stop offset="0.55" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFDF8"/>
+      <stop offset="1" stop-color="#F6E7D3"/>
+    </linearGradient>
+    <linearGradient id="pageR" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFF8EE"/>
+      <stop offset="1" stop-color="#EEDAC0"/>
+    </linearGradient>
+    <linearGradient id="quill" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFE7C2"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="26" flood-color="#2A0E4A" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle tile -->
+  <rect x="32" y="32" width="960" height="960" rx="236" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="236" fill="url(#glow)"/>
+
+  <!-- Open book -->
+  <g filter="url(#soft)">
+    <path d="M512 752 C 430 690 318 676 196 704 L 196 420 C 318 392 430 404 512 470 Z" fill="url(#page)"/>
+    <path d="M512 752 C 594 690 706 676 828 704 L 828 420 C 706 392 594 404 512 470 Z" fill="url(#pageR)"/>
+    <!-- page edges -->
+    <path d="M196 704 C 318 676 430 690 512 752 C 594 690 706 676 828 704 L 828 724 C 706 698 594 712 512 776 C 430 712 318 698 196 724 Z" fill="#E7CDAE"/>
+    <!-- text lines -->
+    <g stroke="#E2C9A9" stroke-width="13" stroke-linecap="round" fill="none" opacity="0.9">
+      <path d="M262 492 C 330 478 400 484 452 508"/>
+      <path d="M262 548 C 330 534 400 540 452 564"/>
+      <path d="M262 604 C 320 592 380 596 424 614"/>
+      <path d="M572 508 C 624 484 694 478 762 492"/>
+      <path d="M572 564 C 624 540 694 534 762 548"/>
+    </g>
+    <!-- spine -->
+    <path d="M512 470 L 512 752" stroke="#D9B992" stroke-width="8" stroke-linecap="round"/>
+  </g>
+
+  <!-- Quill rising from the spine -->
+  <g filter="url(#soft)">
+    <path d="M520 520 C 548 392 640 266 806 188 C 778 322 690 446 548 532 Z" fill="url(#quill)"/>
+    <path d="M532 540 C 600 430 680 320 790 214" stroke="#F2A86B" stroke-width="9" stroke-linecap="round" fill="none"/>
+    <path d="M520 520 L 498 590" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sparkle -->
+  <path d="M318 244 C 326 288 338 300 382 308 C 338 316 326 328 318 372 C 310 328 298 316 254 308 C 298 300 310 288 318 244 Z" fill="#FFFFFF" opacity="0.95"/>
+  <circle cx="420" cy="214" r="12" fill="#FFFFFF" opacity="0.8"/>
+</svg>

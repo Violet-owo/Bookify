@@ -1,156 +1,217 @@
 <div align="center">
 
-<img src="public/logo.png" alt="Bookify Logo" width="140" style="border-radius: 28px; box-shadow: 0 12px 36px rgba(0, 210, 211, 0.3);" />
+<img src="public/logo.png" alt="Bookify" width="128" />
 
 # Bookify
 
-### *The Distraction-Free Narrative Studio for Novelists*
+**A cozy, distraction‑free desktop studio for writing novels.**
 
-[![Tauri v2](https://img.shields.io/badge/Tauri-v2.1-24C8D8?style=for-the-badge&logo=tauri&logoColor=white)](https://tauri.app/)
-[![React 19](https://img.shields.io/badge/React-19.2-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Desktop Native](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com)
-[![Local-First](https://img.shields.io/badge/Architecture-Local--First%20%26%20Zero%20Telemetry-10B981?style=for-the-badge)](https://github.com)
-[![Languages](https://img.shields.io/badge/Languages-English%20%7C%20Italiano-F59E0B?style=for-the-badge)](https://github.com)
+Floating Material‑style interface, mechanical keyboard sounds, a living Novel Bible<br>
+and an AI literary editor powered by Claude, Gemini, OpenAI or a local Ollama model.
 
-<p align="center">
-  <b>A desktop environment designed from the ground up for authors drafting 80,000+ word novels.</b><br>
-  Immersive typewriter flow, real mechanical keyboard acoustics, an offline Novel Bible, and a nuanced AI literary editor.
-</p>
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8D8?style=flat-square&logo=tauri&logoColor=white)](https://tauri.app/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev/)
+[![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D4?style=flat-square&logo=windows&logoColor=white)](https://github.com/Violet-owo/Bookify/releases)
+[![Linux](https://img.shields.io/badge/Linux-AppImage%20%7C%20deb%20%7C%20rpm-FCC624?style=flat-square&logo=linux&logoColor=black)](https://github.com/Violet-owo/Bookify/releases)
+[![Claude](https://img.shields.io/badge/AI-Claude%20%7C%20Gemini%20%7C%20OpenAI%20%7C%20Ollama-D97757?style=flat-square)](#-ai-editor)
+[![IT | EN](https://img.shields.io/badge/UI-Italiano%20%7C%20English-F2706B?style=flat-square)](#-features)
+[![License: MIT](https://img.shields.io/badge/License-MIT-6C4BFF?style=flat-square)](LICENSE)
 
-[✨ Key Features](#-key-features) • [🖼️ Visual Showcase](#️-visual-showcase) • [🛠️ Architecture](#️-architecture--local-first) • [🚀 Build from Source](#-build-and-run-locally) • [👤 Developer](#-developer--portfolio)
+[**Download**](https://github.com/Violet-owo/Bookify/releases) · [Features](#-features) · [Screenshots](#-a-closer-look) · [AI editor](#-ai-editor) · [Build](#-build-from-source) · [Author](#-author)
 
----
+<br>
 
-</div>
+<img src="docs/screenshots/01_editor.png" alt="Bookify editor with the Parchment theme" width="100%" />
 
-## 🌌 Why Bookify?
-
-Most writing software falls into two traps: either it's an overloaded word processor with bloated menus, or a barebones markdown notepad that abandons you when managing complex plots, deep lore, and pacing across 40 chapters.
-
-**Bookify bridges the gap.** Built as a native desktop application with **Tauri v2** and **React**, Bookify delivers sub-millisecond input latency, sensory acoustic feedback, and deep continuity tracking while keeping your manuscript 100% private on your own disk.
-
----
-
-## 🖼️ Visual Showcase
-
-### 1. The Distraction-Free Flow Studio
-> *The entire interface gracefully fades away while you type, leaving only your prose centered in focus.*
-
-<div align="center">
-  <img src="docs/screenshots/01_editor_flow.png" alt="Bookify Flow Editor" width="90%" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
 </div>
 
 <br>
 
-### 2. The Editor's Room (*La Stanza dell'Editor*)
-> *Deep literary diagnostics: pacing curve scores, "Show Don't Tell" filter word detection, narrative craft advice, and high-octane cliffhanger generation.*
+## 🌙 Why Bookify
 
-<div align="center">
-  <img src="docs/screenshots/02_editor_room.png" alt="The Editor's Room" width="90%" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
-</div>
+Most writing apps are either overloaded word processors or bare notepads that leave you alone with forty chapters, a dozen characters and a plot you have to keep in your head.
 
-<br>
+Bookify sits in between. It is a native Windows app (Tauri + React) that opens in a second, stays out of your way while you write, and keeps your characters, plot beats and pacing one click away. Your manuscript lives in a plain `.bookify` file on your own disk, and nothing leaves your PC unless you ask the AI for help.
 
-### 3. The Novel Bible (*Continuità Narrativa*)
-> *Track characters (goals, fatal flaws, arcs), locations, and key turning points without leaving your workspace. Includes auto-extraction from chapter text.*
+## ✨ Features
 
-<div align="center">
-  <img src="docs/screenshots/03_novel_bible.png" alt="Novel Bible" width="90%" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
-</div>
+**Writing**
+- **Flow mode:** while you type, the floating pills fade out and only the page stays. Move the mouse and everything comes back.
+- **Typewriter line focus:** the current line stays centred and the rest of the page softly dims.
+- **Smart typography:** curly quotes, em dashes and ellipses as you type, following Italian or English conventions.
+- **One‑click formatting** (`Ctrl+Shift+F`): fixes paragraphs, punctuation and dialogue to publishing standards. `Ctrl+Z` undoes it.
+- **Goals and stats:** words, characters, reading time, a daily goal ring and progress towards the book target.
 
-<br>
+**Atmosphere**
+- **12 author themes:** Parchment, Serika, Dracula, Nord, Botanical, Espresso, Carbon, Terminal, Solarized, Gruvbox, Synthwave and Ink.
+- **Mechanical keyboard sounds:** Purple Lavender, Holy Panda, Topre, IBM Model M, an Olivetti typewriter and more.
+- **Ambient soundscapes:** rain on the window, library fireplace, literary café, autumn wind, lo‑fi vinyl and alpha waves.
+- **Offline fonts:** Lora, Merriweather, Outfit, JetBrains Mono and others are bundled, so nothing loads from the internet.
 
-### 4. Acoustic Soundscapes & Multi-Language Settings
-> *Curated mechanical switch profiles (Purple Lavender, Akko, Thock, Typewriter), ambient tracks, and bilingual English/Italian toggle.*
+**Interface**
+- Floating pills and a docked sidebar in a Material You / Pixel style, with tonal surfaces and spring physics.
+- Ripples, sliding selection indicators and a small animation on every icon.
+- **Circular theme reveal:** the new theme spreads out from the button you clicked.
+- **Animation speed** set in Settings applies to every transition, and you can switch animations off entirely.
+- Fully responsive: below 1100 px the sidebar becomes a sliding sheet.
 
-<div align="center">
-  <img src="docs/screenshots/04_settings_modal.png" alt="Settings & Sound Profiles" width="90%" style="border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);" />
-</div>
+**Your work**
+- **Bookshelf** with multiple novels, cover cards and per‑book progress.
+- **Every book linked to its own file.** Autosave writes atomically (temp file + rename), so a crash never leaves a half‑written manuscript.
+- **Export** chapters or the whole manuscript as Markdown or plain text, plus full JSON backups.
+- **Novel Bible:** characters (goal, blind spot, voice), plot beats, setting and synopsis, always in sync with the active book.
+- **Italian and English** interface, switchable at any time.
 
----
+## 🖼 A closer look
 
-## ✨ Key Features
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/02_settings_themes.png" alt="Theme picker" /></td>
+    <td width="50%"><img src="docs/screenshots/03_theme_switch.png" alt="Circular theme reveal" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Themes:</b> twelve palettes with a sliding highlight</sub></td>
+    <td align="center"><sub><b>Theme reveal:</b> the new palette grows out of the clicked card</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/06_editor_room.png" alt="Editor's Room" /></td>
+    <td><img src="docs/screenshots/05_novel_bible.png" alt="Novel Bible" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Editor's Room:</b> pacing, show‑don't‑tell, cliffhangers and typos</sub></td>
+    <td align="center"><sub><b>Novel Bible:</b> characters, plot beats, setting and synopsis</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/04_bookshelf.png" alt="Bookshelf" /></td>
+    <td><img src="docs/screenshots/07_settings_ai.png" alt="AI settings" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Bookshelf:</b> all your novels with their progress</sub></td>
+    <td align="center"><sub><b>AI settings:</b> Claude, Gemini, OpenAI or Ollama</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/08_editor_nord.png" alt="Nord theme" /></td>
+    <td><img src="docs/screenshots/09_compact_window.png" alt="Compact window with the sidebar sheet" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub><b>Nord theme:</b> arctic slate and polar cyan</sub></td>
+    <td align="center"><sub><b>Small windows:</b> the sidebar turns into a sliding sheet</sub></td>
+  </tr>
+</table>
 
-| Feature | Description |
+## 🪄 AI editor
+
+Every AI feature is optional. Without a key, Bookify still runs a local analysis of pacing, sentence length, filter words and repetitions.
+
+With a provider set up, you get:
+
+- **Refine:** rewrites the selected passage or the chapter. You review every change in a side‑by‑side diff before accepting it.
+- **Editor's Room:** a critique of the chapter or of the whole book, covering tension, show‑don't‑tell, cliffhangers and typos.
+- **Bible auto‑fill:** extracts characters, places and plot beats from your chapters.
+- **Real‑time suggestions** (off by default): flags typos and ambiguous sentences while you pause.
+
+### Using Claude
+
+1. Create an API key in the [Anthropic Console](https://console.anthropic.com/settings/keys).
+2. In Bookify open **Settings → AI & Bible**, choose **Claude**, paste the key and press **Verify**.
+3. Pick a model:
+
+| Model | Best for |
 |---|---|
-| ⌨️ **Sensory Typing Acoustics** | Studio-grade physical audio engine featuring **Purple Lavender**, Akko CS, Thock, Topre, and vintage Typewriter switches, synced to every keypress. |
-| 🌧️ **Ambient Soundscapes** | Built-in binaural audio tracks (Gentle Rain, Cozy Fireplace, Night Cafe, Library Alpha Waves) to induce deep writing flow. |
-| 📖 **Novel Bible Companion** | Keep tabs on characters, world lore, and plot beats. Auto-compiles entities using local heuristics or remote LLMs. |
-| 🔍 **The Literary Editor's Room** | Evaluates chapters against narrative pacing, passive filter verbs, consecutive repetitions, and emotional resonance. |
-| ⚡ **Cliffhanger Generator** | Analyzes chapter endings and crafts three distinct suspense hooks (Enigma, Physical Peril, Dramatic Dilemma). |
-| 🔒 **Local-First & Native Files** | Real-time autosave directly to your computer's filesystem (`.bookify` / `.json`). Zero cloud lock-in. |
-| 🌐 **Bilingual English & Italian** | Complete native localization for UI, typographic conventions, and specialized LLM prompts. |
-| 🪶 **Bestseller Formats Export** | One-click export for individual chapters or entire manuscripts formatted in clean Markdown (`.md`) and Plain Text (`.txt`). |
+| **Claude Opus 5.5** | the highest literary quality (default) |
+| **Claude Sonnet 5.5** | a balance of quality and speed |
+| **Claude Haiku 5.5** | fast, inexpensive checks |
 
----
+Your key is stored only on your computer and is sent only to the provider you picked. Bookify has no telemetry.
 
-## 🛠️ Architecture & Local-First
+## ⌨️ Keyboard shortcuts
 
-- **Engine**: [Tauri v2](https://tauri.app/) (Rust backend for instant startup, minimal RAM footprint ~40MB, and direct OS file integration).
-- **Frontend**: [React 19](https://react.dev/) + [Vite](https://vitejs.dev/) with Material 3 Expressive motion tokens.
-- **Audio Core**: Web Audio API synthesis and low-latency sample playback buffer.
-- **AI Compatibility**: Zero-setup offline heuristics + optional BYOK integration (Google Gemini, OpenAI, or local Ollama).
+| Shortcut | Action |
+|---|---|
+| `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
+| `Ctrl+O` | Open a `.bookify` or backup file |
+| `Ctrl+J` or `Ctrl+K` | Show or hide the sidebar |
+| `Ctrl+L` | Bookshelf |
+| `Ctrl+I` | Novel details |
+| `Ctrl+B` | Novel Bible |
+| `Ctrl+R` | Editor's Room |
+| `Ctrl+,` | Settings |
+| `Ctrl+Shift+F` | Format the chapter |
+| `F11` | Full screen |
+| `Esc` | Close the open panel |
 
----
+## 📦 Download
 
-## 🚀 Build and Run Locally
+Grab the latest version from the [Releases page](https://github.com/Violet-owo/Bookify/releases).
 
-### Prerequisites
-1. **Node.js** (v18 or higher) & `npm`
-2. **Rust & Cargo** (required for Tauri compilation): [Install Rust](https://www.rust-lang.org/tools/install)
-3. Windows C++ Build Tools (on Windows) or standard Xcode/GCC tools (on macOS/Linux).
+**Windows 10 / 11**
+- `Bookify_1.0.0_x64-setup.exe`: the standard installer (recommended)
+- `Bookify_1.0.0_x64_en-US.msi`: the MSI package
 
-### Quickstart
+Windows already includes WebView2, so nothing else needs to be installed.
+
+**Linux (x86‑64)**
+- `Bookify_1.0.0_amd64.AppImage`: runs on most distributions. Make it executable with `chmod +x`, then start it.
+- `Bookify_1.0.0_amd64.deb`: for Debian, Ubuntu and Mint
+- `Bookify-1.0.0-1.x86_64.rpm`: for Fedora and openSUSE
+
+Windows is the main platform. The Linux builds come from the same code but are tested less. On older WebKitGTK versions, theme changes are instant instead of using the circular animation.
+
+## 🛠 Build from source
+
+**Prerequisites:** Node.js 18+ and [Rust](https://www.rust-lang.org/tools/install), plus:
+- **Windows:** the Microsoft C++ Build Tools
+- **Linux:** `sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf` (or your distribution's equivalent)
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/Bookify.git
+git clone https://github.com/Violet-owo/Bookify.git
 cd Bookify
-
-# 2. Install dependencies
 npm install
 
-# 3. Launch in Desktop Development Mode (Tauri)
-npm run tauri:dev
-
-# Alternatively, run purely in the web browser
-npm run dev
+npm run tauri:dev     # desktop app with hot reload
+npm run dev           # browser only, no file system access
+npm run tauri:build   # installers in src-tauri/target/release/bundle/
 ```
 
-### Packaging Desktop Installers (`.exe` / `.msi`)
+Pushing a tag such as `v1.0.1` runs the [Release workflow](.github/workflows/release.yml). It builds the Windows and Linux installers on GitHub Actions and attaches them to a draft release.
 
-To compile the release bundle for your operating system:
+### Under the hood
 
-```bash
-npm run tauri:build
-```
+| Layer | Technology |
+|---|---|
+| Shell | Tauri v2 (Rust): atomic file writes, native dialogs, about 40 MB of RAM |
+| UI | React 19 + Vite, hand‑written CSS with Material motion tokens and the View Transitions API |
+| Audio | Web Audio API, with low‑latency samples for keys and ambience |
+| AI | `@anthropic-ai/sdk` (loaded lazily), Gemini, OpenAI‑compatible REST, Ollama |
+| Icons | Lucide |
 
-The compiled standalone executable and installer will be generated in:
-`src-tauri/target/release/bundle/msi/` and `src-tauri/target/release/bundle/nsis/`.
+## 🗺 Roadmap
 
----
+- [x] Flow mode, typewriter focus, keyboard sounds and soundscapes
+- [x] Novel Bible, Editor's Room, Italian/English UI
+- [x] **1.0:** Claude integration, floating Material UI, animated splash screen, per‑book files
+- [ ] Search and replace across the whole manuscript
+- [ ] DOCX and ePub export
+- [x] Linux builds (AppImage, deb, rpm)
+- [ ] Signed installers and macOS builds
 
-## 🗺️ Roadmap to Public Release
+## 👩‍💻 Author
 
-- [x] **v1.0-alpha**: Distraction-Free Flow Mode & Typewriter Scrolling
-- [x] **v1.1**: Purple Lavender Switch Audio Engine & Soundscapes
-- [x] **v1.2**: Novel Bible & Chapter Review AI Companion
-- [x] **v1.3**: Complete Bilingual Localization (IT/EN) & Tauri v2 Migration
-- [ ] **v1.4**: Global Manuscript Search & Replace across all chapters
-- [ ] **v1.5**: Direct standard DOCX / ePub manuscript export
-- [ ] **v2.0**: Official Public Release with signed Windows `.msi` and macOS `.dmg`
+Bookify is designed and built by **Violet M.**
 
----
+<a href="https://portfolio.violetvrc30.workers.dev/"><img src="https://img.shields.io/badge/Portfolio-visit-F2706B?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Portfolio" /></a>
+<a href="https://github.com/Violet-owo"><img src="https://img.shields.io/badge/GitHub-Violet--owo-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub" /></a>
 
-## 👤 Developer & Portfolio
+- 🌐 Portfolio: **[portfolio.violetvrc30.workers.dev](https://portfolio.violetvrc30.workers.dev/)**
+- 🐛 Bugs and ideas: [open an issue](https://github.com/Violet-owo/Bookify/issues)
 
-Created with passion for literature and high-performance software engineering.
+The portfolio is also linked inside the app: in the footer of **Settings** and on the **Settings → Themes → The developer** card.
 
-- **Developer Portfolio**: [Visit Portfolio](https://github.com)
-- **Feedback & Community**: Open an [Issue](https://github.com) or join the discussion.
+## 📄 License
 
----
+Released under the [MIT License](LICENSE). The bundled fonts are under the SIL Open Font License.
 
 <div align="center">
-  <sub>Designed for dreamers, storytellers, and worldbuilders. If you like Bookify, please consider starring ⭐ this repository!</sub>
+<br>
+<sub>Made for dreamers, storytellers and worldbuilders. If Bookify keeps you writing, leave a ⭐</sub>
 </div>

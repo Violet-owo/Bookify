@@ -1,16 +1,19 @@
 import React from 'react';
+import { useI18n } from '../utils/i18n';
 
 /**
  * Modern AI circle loader with orbiting glowing particles and status text.
  * Supports both vertical card layout (default) and compact horizontal strip layout (compact=true).
  */
 export default function AiCircleLoader({
-  message = "L'AI sta leggendo ed elaborando...",
+  message,
   submessage = null,
   size = 46,
   elapsedSeconds = null,
   compact = false
 }) {
+  const { t } = useI18n();
+  message = message || t('common.aiWorking');
   if (compact) {
     return (
       <div 

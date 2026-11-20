@@ -1,17 +1,12 @@
 import React, { useState } from 'react';
-import { 
-  X, 
-  Plus, 
-  Trash2, 
-  Copy, 
-  Download, 
-  Upload, 
-  Bookmark, 
-  Layers,
-  FolderOpen
-} from 'lucide-react';
+import { X, Plus, Trash2, Copy, Download, Upload, Bookmark, Layers, FolderOpen } from 'lucide-react';
 import { createNewBook, exportProjectBackup } from '../utils/storage';
 import { useAnimatedVisibility } from '../utils/useAnimatedVisibility';
+import { useI18n } from '../utils/i18n';
+import { useFeedback } from './Feedback';
+
+const GENRES = ['thriller', 'contemporary', 'historical', 'scifi', 'fantasy', 'mystery', 'romance', 'horror', 'nonfiction'];
+const countWords = (text) => (text || '').trim().split(/\s+/).filter(Boolean).length;
 
 export default function BookshelfModal({
   isOpen,
@@ -22,413 +17,228 @@ export default function BookshelfModal({
   onCreateBook,
   onDuplicateBook,
   onDeleteBook,
-  onImportLibrary,
   onOpenFileFromDisk
 }) {
-  const animDuration = settings?.enableAnimations !== false
-    ? Number(settings?.animationDurationMs) || 280
-    : 0;
+  const { t, language } = useI18n();
+  const { notify, confirm } = useFeedback();
+  const animDuration = settings?.enableAnimations !== false ? Number(settings?.animationDurationMs) || 280 : 0;
   const { shouldRender, isExiting } = useAnimatedVisibility(isOpen, animDuration);
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newGenre, setNewGenre] = useState('Thriller / Mistero');
+  const [newGenre, setNewGenre] = useState('thriller');
   const [newTargetWords, setNewTargetWords] = useState(60000);
+  const locale = language === 'en' ? 'en-US' : 'it-IT';
 
   if (!shouldRender) return null;
 
   const handleCreateSubmit = (e) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
-    const newBook = createNewBook(newTitle.trim(), newGenre);
-    newBook.targetWords = parseInt(newTargetWords) || 50000;
+    const newBook = createNewBook(newTitle.trim(), t(`genres.${newGenre}`), language);
+    newBook.targetWords = Math.max(1000, parseInt(newTargetWords, 10) || 50000);
     onCreateBook(newBook);
     setIsCreating(false);
     setNewTitle('');
+    onClose();
   };
 
-  const handleFileImport = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target.result);
-        if (parsed && Array.isArray(parsed.books)) {
-          onImportLibrary(parsed);
-          onClose();
-        } else if (parsed && parsed.chapters && parsed.title) {
-          onCreateBook(parsed);
-          onClose();
-        } else {
-          alert('Il file selezionato non è un formato .bookify o backup valido.');
-        }
-      } catch {
-        alert('Errore durante la lettura del file selezionato.');
-      }
-    };
-    reader.readAsText(file);
+  const handleDelete = async (book) => {
+    const ok = await confirm({
+      title: t('bookshelf.deleteTitle'),
+      message: t('bookshelf.deleteMessage', { title: book.title }),
+      confirmLabel: t('common.delete'),
+      danger: true
+    });
+    if (ok) {
+      onDeleteBook(book.id);
+      notify(t('bookshelf.deleted', { title: book.title }), { tone: 'info' });
+    }
+  };
+
+  const handleExportBackup = async () => {
+    try {
+      const result = await exportProjectBackup(library, language);
+      if (result?.success) notify(t('drawer.exported', { file: result.fileName }), { tone: 'success' });
+    } catch (error) {
+      notify(t('drawer.exportFailed', { error: error.message || error }), { tone: 'error' });
+    }
+  };
+
+  const formatDate = (iso) => {
+    if (!iso) return t('bookshelf.recently');
+    try {
+      return new Date(iso).toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+    } catch {
+      return iso.slice(0, 10);
+    }
   };
 
   return (
-    <div 
-      className={`m3-modal-backdrop ${isExiting ? 'm3-modal-backdrop-exit' : ''}`}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        bottom: 0,
-        right: 0,
-        backgroundColor: 'rgba(10, 8, 6, 0.85)',
-        backdropFilter: 'blur(12px)',
-        zIndex: 250,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '2rem'
-      }}
-      onClick={onClose}
-    >
-      <div 
-        className={`glass-panel m3-dialog-panel ${isExiting ? 'm3-dialog-panel-exit' : ''}`}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: '920px',
-          maxWidth: '96vw',
-          maxHeight: '88vh',
-          backgroundColor: 'var(--bg-secondary)',
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 'var(--m3-shape-dialog, 24px)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          boxShadow: '0 25px 60px rgba(0, 0, 0, 0.85)'
-        }}
+    <div className={`m3-modal-backdrop bk-modal-backdrop ${isExiting ? 'm3-modal-backdrop-exit' : ''}`} onMouseDown={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bookshelf-title"
+        className={`glass-panel m3-dialog-panel bookshelf-dialog ${isExiting ? 'm3-dialog-panel-exit' : ''}`}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="m3-dialog-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-            <div className="m3-dialog-icon-box">
-              <Bookmark size={20} className="m3-icon-bounce" />
-            </div>
+        <header className="m3-dialog-header">
+          <div className="bk-dialog-heading">
+            <div className="m3-dialog-icon-box"><Bookmark size={20} className="m3-icon-bounce" /></div>
             <div>
-              <h2 style={{ fontSize: '1.2rem', fontWeight: '700', color: 'var(--text-primary)', fontFamily: 'var(--font-serif)', margin: 0 }}>
-                Biblioteca dei Romanzi
-              </h2>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '0.15rem 0 0 0' }}>
-                Gestisci le tue opere letterarie, obiettivi di parole e versioni dei manoscritti.
-              </p>
+              <h2 id="bookshelf-title">{t('bookshelf.title')}</h2>
+              <p>{t('bookshelf.subtitle')}</p>
             </div>
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+          <div className="bk-dialog-heading-actions">
             <button
               type="button"
               onClick={() => {
-                if (onOpenFileFromDisk) {
-                  onOpenFileFromDisk();
-                  onClose();
-                }
+                onClose();
+                onOpenFileFromDisk?.();
               }}
-              className="m3-chip"
-              style={{ padding: '0.45rem 0.85rem', fontSize: '0.78rem' }}
+              className="m3-btn m3-btn-outlined bookshelf-header-btn"
             >
               <FolderOpen size={14} className="m3-icon-bounce" style={{ color: 'var(--accent-amber)' }} />
-              <span>Apri da PC</span>
+              <span>{t('bookshelf.openFromDisk')}</span>
             </button>
-
-            <button
-              onClick={() => setIsCreating(true)}
-              className="m3-btn m3-btn-filled"
-              style={{ padding: '0.45rem 1rem', fontSize: '0.8rem' }}
-            >
-              <Plus size={15} className="m3-icon-bounce" /> Nuovo Romanzo
+            <button type="button" onClick={() => setIsCreating(true)} className="m3-btn m3-btn-filled bookshelf-header-btn">
+              <Plus size={15} className="m3-icon-bounce" /> {t('bookshelf.newBook')}
             </button>
-
-            <button onClick={onClose} className="m3-dialog-close-btn" title="Chiudi (Esc)">
+            <button type="button" onClick={onClose} className="m3-dialog-close-btn" aria-label={t('common.close')} title={t('common.closeEsc')}>
               <X size={17} />
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* Modal Body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '2rem' }}>
-          {/* Create Book Form Drawer */}
+        <div className="bookshelf-body">
           {isCreating && (
-            <form 
-              onSubmit={handleCreateSubmit}
-              className="animate-fade-in"
-              style={{
-                backgroundColor: 'var(--bg-elevated)',
-                padding: '1.5rem',
-                borderRadius: 'var(--radius-md)',
-                border: '1px solid var(--accent-cyan)',
-                marginBottom: '2rem'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.2rem' }}>
-                <h3 style={{ fontSize: '1rem', fontWeight: '600', color: 'var(--text-primary)' }}>
-                  Inizia un Nuovo Progetto Letterario
-                </h3>
-                <button type="button" onClick={() => setIsCreating(false)} style={{ color: 'var(--text-muted)' }}>
+            <form onSubmit={handleCreateSubmit} className="animate-fade-in bookshelf-create">
+              <div className="bookshelf-create-head">
+                <h3>{t('bookshelf.createTitle')}</h3>
+                <button type="button" className="editor-icon-btn" onClick={() => setIsCreating(false)} aria-label={t('common.cancel')}>
                   <X size={16} />
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1fr', gap: '1rem', marginBottom: '1.2rem' }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                    Titolo del Libro / Opera *
-                  </label>
+              <div className="bookshelf-create-grid">
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('bookshelf.bookTitle')} *</span>
                   <input
                     type="text"
                     required
+                    className="settings-input"
                     value={newTitle}
                     onChange={(e) => setNewTitle(e.target.value)}
-                    placeholder="es. L'Enigma di Castel Sant'Angelo"
+                    placeholder={t('bookshelf.titlePlaceholder')}
                     autoFocus
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem 0.8rem',
-                      fontSize: '0.88rem',
-                      backgroundColor: 'var(--bg-primary)'
-                    }}
                   />
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                    Genere Letterario
-                  </label>
-                  <select
-                    value={newGenre}
-                    onChange={(e) => setNewGenre(e.target.value)}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem 0.8rem',
-                      fontSize: '0.88rem',
-                      backgroundColor: 'var(--bg-primary)',
-                      color: 'var(--text-primary)'
-                    }}
-                  >
-                    <option value="Thriller / Mistero">Thriller / Mistero</option>
-                    <option value="Narrativa Contemporanea">Narrativa Contemporanea</option>
-                    <option value="Romanzo Storico">Romanzo Storico</option>
-                    <option value="Fantascienza / Sci-Fi">Fantascienza / Sci-Fi</option>
-                    <option value="Fantasy Epico">Fantasy Epico</option>
-                    <option value="Giallo Investigativo">Giallo Investigativo</option>
-                    <option value="Saggio / Non-Fiction">Saggio / Non-Fiction</option>
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('bookshelf.genre')}</span>
+                  <select className="settings-input" value={newGenre} onChange={(e) => setNewGenre(e.target.value)}>
+                    {GENRES.map(id => <option key={id} value={id}>{t(`genres.${id}`)}</option>)}
                   </select>
-                </div>
-
-                <div>
-                  <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '0.35rem' }}>
-                    Obiettivo Parole
-                  </label>
+                </label>
+                <label className="settings-field">
+                  <span className="settings-field-label">{t('bookshelf.wordGoal')}</span>
                   <input
                     type="number"
+                    className="settings-input"
                     value={newTargetWords}
                     onChange={(e) => setNewTargetWords(e.target.value)}
-                    min={5000}
+                    min={1000}
                     step={5000}
-                    style={{
-                      width: '100%',
-                      padding: '0.6rem 0.8rem',
-                      fontSize: '0.88rem',
-                      backgroundColor: 'var(--bg-primary)'
-                    }}
                   />
-                </div>
+                </label>
               </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.65rem' }}>
-                <button
-                  type="button"
-                  onClick={() => setIsCreating(false)}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.82rem',
-                    color: 'var(--text-secondary)',
-                    border: '1px solid var(--border-subtle)'
-                  }}
-                >
-                  Annulla
-                </button>
-                <button
-                  type="submit"
-                  style={{
-                    padding: '0.5rem 1.25rem',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.82rem',
-                    fontWeight: '600',
-                    backgroundColor: 'var(--accent-cyan)',
-                    color: '#1a1612'
-                  }}
-                >
-                  Crea e Inizia a Scrivere
-                </button>
+              <div className="bookshelf-create-actions">
+                <button type="button" className="m3-btn m3-btn-outlined" onClick={() => setIsCreating(false)}>{t('common.cancel')}</button>
+                <button type="submit" className="m3-btn m3-btn-filled" disabled={!newTitle.trim()}>{t('bookshelf.createAndWrite')}</button>
               </div>
             </form>
           )}
 
-          {/* Bookshelf Grid */}
-          <div 
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
-              gap: '1.5rem'
-            }}
-          >
-            {library.books.map((b) => {
-              const isActive = b.id === library.activeBookId;
-              const totalWords = (b.chapters || []).reduce((acc, chap) => {
-                return acc + (chap.content || '').trim().split(/\s+/).filter(Boolean).length;
-              }, 0);
-              const target = b.targetWords || 50000;
+          <div className="bookshelf-grid">
+            {library.books.map((book) => {
+              const isActive = book.id === library.activeBookId;
+              const totalWords = (book.chapters || []).reduce((acc, chap) => acc + countWords(chap.content), 0);
+              const target = book.targetWords || 50000;
               const progress = Math.min(100, Math.round((totalWords / target) * 100));
+              const spine = book.coverColor || 'var(--accent-cyan)';
 
               return (
                 <div
-                  key={b.id}
+                  key={book.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-current={isActive ? 'true' : undefined}
                   onClick={() => {
-                    onSelectBook(b.id);
+                    onSelectBook(book.id);
                     onClose();
                   }}
-                  className={`m3-card ${isActive ? 'm3-card-active' : ''}`}
-                  style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    cursor: 'pointer',
-                    position: 'relative',
-                    overflow: 'hidden'
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      onSelectBook(book.id);
+                      onClose();
+                    }
                   }}
+                  className={`m3-card book-card ${isActive ? 'm3-card-active' : ''}`}
+                  style={{ '--spine': spine }}
                 >
-                  {/* Spine Color Accent Tag */}
-                  <div 
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: '4px',
-                      backgroundColor: b.coverColor || 'var(--accent-cyan)',
-                      borderTopLeftRadius: 'var(--radius-md)',
-                      borderTopRightRadius: 'var(--radius-md)'
-                    }}
-                  />
-
-                  {/* Header info */}
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.65rem' }}>
-                      <span 
-                        style={{
-                          fontSize: '0.7rem',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.06em',
-                          color: 'var(--text-secondary)',
-                          fontWeight: '600'
-                        }}
-                      >
-                        {b.genre || 'Narrativa'}
-                      </span>
-                      {isActive && (
-                        <span 
-                          style={{
-                            fontSize: '0.68rem',
-                            padding: '0.15rem 0.5rem',
-                            borderRadius: 'var(--radius-full)',
-                            backgroundColor: 'var(--accent-cyan)',
-                            color: '#1a1612',
-                            fontWeight: '700'
-                          }}
-                        >
-                          ATTIVO
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 
-                      style={{
-                        fontSize: '1.15rem',
-                        fontWeight: '700',
-                        color: 'var(--text-primary)',
-                        fontFamily: 'var(--font-serif)',
-                        lineHeight: 1.3,
-                        marginBottom: '0.4rem'
-                      }}
-                    >
-                      {b.title}
-                    </h3>
-                    
-                    {b.subtitle && (
-                      <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginBottom: '0.5rem' }}>
-                        {b.subtitle}
-                      </p>
-                    )}
-
-                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {(b.chapters || []).length} capitoli • Ultima modifica {b.updatedAt ? b.updatedAt.slice(0, 10) : 'recente'}
-                    </p>
+                  <div className="book-cover" aria-hidden="true">
+                    <span className="book-cover-genre">{book.genre || t('genres.contemporary')}</span>
+                    <span className="book-cover-title">{book.title}</span>
+                    <span className="book-cover-rule" />
+                    <span className="book-cover-author">{book.author || ''}</span>
                   </div>
 
-                  {/* Progress & Stats */}
-                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border-subtle)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '0.4rem' }}>
-                      <span style={{ color: 'var(--text-secondary)' }}>Avanzamento</span>
-                      <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>
-                        {totalWords.toLocaleString()} / {target.toLocaleString()} parole ({progress}%)
-                      </span>
+                  <div className="book-card-info">
+                    <div className="book-card-top">
+                      <h3 className="book-card-title">{book.title}</h3>
+                      {isActive && <span className="book-card-active">{t('bookshelf.active')}</span>}
+                    </div>
+                    {book.subtitle && <p className="book-card-subtitle">{book.subtitle}</p>}
+                    <p className="book-card-meta">
+                      {t('bookshelf.meta', { chapters: (book.chapters || []).length, date: formatDate(book.updatedAt) })}
+                    </p>
+
+                    <div className="book-card-progress">
+                      <div className="book-card-progress-head">
+                        <span>{t('bookshelf.progress')}</span>
+                        <strong>{totalWords.toLocaleString(locale)} / {target.toLocaleString(locale)}</strong>
+                      </div>
+                      <div className="book-card-bar" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
+                        <div style={{ width: `${Math.max(progress, totalWords ? 1.5 : 0)}%` }} />
+                      </div>
                     </div>
 
-                    {/* Progress Bar */}
-                    <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--bg-primary)', borderRadius: '3px', overflow: 'hidden' }}>
-                      <div 
-                        style={{
-                          width: `${progress}%`,
-                          height: '100%',
-                          backgroundColor: b.coverColor || 'var(--accent-cyan)',
-                          borderRadius: '3px',
-                          transition: 'width 0.4s ease'
-                        }}
-                      />
-                    </div>
-
-                    {/* Book Actions */}
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.35rem', marginTop: '0.85rem' }}>
+                    <div className="book-card-actions">
                       <button
-                        title="Duplica Romanzo"
+                        type="button"
+                        title={t('bookshelf.duplicate')}
+                        aria-label={t('bookshelf.duplicate')}
+                        className="editor-icon-btn"
                         onClick={(e) => {
                           e.stopPropagation();
-                          onDuplicateBook(b);
+                          onDuplicateBook(book);
                         }}
-                        style={{
-                          padding: '0.3rem 0.5rem',
-                          color: 'var(--text-muted)',
-                          borderRadius: 'var(--radius-xs)'
-                        }}
-                        onMouseEnter={(e) => e.currentTarget.style.color = 'var(--text-primary)'}
-                        onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                        onKeyDown={(e) => e.stopPropagation()}
                       >
                         <Copy size={14} />
                       </button>
-
                       {library.books.length > 1 && (
                         <button
-                          title="Elimina Romanzo"
+                          type="button"
+                          title={t('common.delete')}
+                          aria-label={t('common.delete')}
+                          className="editor-icon-btn book-card-delete"
                           onClick={(e) => {
                             e.stopPropagation();
-                            if (confirm(`Sei sicuro di voler eliminare definitivamente il libro "${b.title}"?`)) {
-                              onDeleteBook(b.id);
-                            }
+                            handleDelete(book);
                           }}
-                          style={{
-                            padding: '0.3rem 0.5rem',
-                            color: 'var(--text-muted)',
-                            borderRadius: 'var(--radius-xs)'
-                          }}
-                          onMouseEnter={(e) => e.currentTarget.style.color = 'var(--accent-coral)'}
-                          onMouseLeave={(e) => e.currentTarget.style.color = 'var(--text-muted)'}
+                          onKeyDown={(e) => e.stopPropagation()}
                         >
                           <Trash2 size={14} />
                         </button>
@@ -441,59 +251,30 @@ export default function BookshelfModal({
           </div>
         </div>
 
-        {/* Footer Backup & Export */}
-        <div 
-          style={{
-            padding: '1.2rem 2rem',
-            borderTop: '1px solid var(--border-subtle)',
-            backgroundColor: 'var(--bg-elevated)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: '0.78rem'
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)' }}>
-            <Layers size={15} style={{ color: 'var(--accent-cyan)' }} />
-            <span>Totale: {library.books.length} romanzi nella biblioteca locale</span>
+        <footer className="bookshelf-footer">
+          <div className="bookshelf-footer-info">
+            <Layers size={15} />
+            <span>{t(library.books.length === 1 ? 'bookshelf.totalOne' : 'bookshelf.totalMany', { count: library.books.length })}</span>
           </div>
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                cursor: 'pointer',
-                color: 'var(--text-secondary)',
-                padding: '0.35rem 0.75rem',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)'
+          <div className="bookshelf-footer-actions">
+            <button
+              type="button"
+              className="m3-btn m3-btn-outlined"
+              onClick={() => {
+                onClose();
+                onOpenFileFromDisk?.();
               }}
+              title={t('bookshelf.restoreHint')}
             >
               <Upload size={14} />
-              <span>Importa File (.bookify / .json)</span>
-              <input type="file" accept=".bookify,.json" onChange={handleFileImport} style={{ display: 'none' }} />
-            </label>
-
-            <button
-              onClick={() => exportProjectBackup(library)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                color: 'var(--text-primary)',
-                padding: '0.35rem 0.75rem',
-                borderRadius: 'var(--radius-sm)',
-                border: '1px solid var(--border-subtle)',
-                backgroundColor: 'var(--bg-secondary)'
-              }}
-            >
+              <span>{t('bookshelf.restoreBackup')}</span>
+            </button>
+            <button type="button" className="m3-btn m3-btn-outlined" onClick={handleExportBackup}>
               <Download size={14} />
-              <span>Esporta Backup Completo (.json)</span>
+              <span>{t('bookshelf.exportBackup')}</span>
             </button>
           </div>
-        </div>
+        </footer>
       </div>
     </div>
   );

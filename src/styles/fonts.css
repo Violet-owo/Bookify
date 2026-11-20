@@ -1,0 +1,205 @@
+/* Bundled fonts (served from /public/fonts so Bookify works fully offline). Generated from @fontsource, SIL Open Font License. */
+/* lora-latin-400-normal */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/lora-latin-400-normal.woff2) format("woff2");
+}/* lora-latin-500-normal */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/fonts/lora-latin-500-normal.woff2) format("woff2");
+}/* lora-latin-600-normal */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/fonts/lora-latin-600-normal.woff2) format("woff2");
+}/* lora-latin-700-normal */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(/fonts/lora-latin-700-normal.woff2) format("woff2");
+}/* lora-latin-400-italic */
+@font-face {
+  font-family: 'Lora';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/lora-latin-400-italic.woff2) format("woff2");
+}/* lora-latin-600-italic */
+@font-face {
+  font-family: 'Lora';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/fonts/lora-latin-600-italic.woff2) format("woff2");
+}/* lora-latin-ext-400-normal */
+@font-face {
+  font-family: 'Lora';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/lora-latin-ext-400-normal.woff2) format("woff2");
+}/* lora-latin-ext-400-italic */
+@font-face {
+  font-family: 'Lora';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/lora-latin-ext-400-italic.woff2) format("woff2");
+}/* merriweather-latin-300-normal */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(/fonts/merriweather-latin-300-normal.woff2) format("woff2");
+}/* merriweather-latin-400-normal */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/merriweather-latin-400-normal.woff2) format("woff2");
+}/* merriweather-latin-700-normal */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(/fonts/merriweather-latin-700-normal.woff2) format("woff2");
+}/* merriweather-latin-300-italic */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 300;
+  src: url(/fonts/merriweather-latin-300-italic.woff2) format("woff2");
+}/* merriweather-latin-400-italic */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/merriweather-latin-400-italic.woff2) format("woff2");
+}/* merriweather-latin-ext-400-normal */
+@font-face {
+  font-family: 'Merriweather';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/merriweather-latin-ext-400-normal.woff2) format("woff2");
+}/* cinzel-latin-500-normal */
+@font-face {
+  font-family: 'Cinzel';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/fonts/cinzel-latin-500-normal.woff2) format("woff2");
+}/* cinzel-latin-600-normal */
+@font-face {
+  font-family: 'Cinzel';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/fonts/cinzel-latin-600-normal.woff2) format("woff2");
+}/* cinzel-latin-700-normal */
+@font-face {
+  font-family: 'Cinzel';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(/fonts/cinzel-latin-700-normal.woff2) format("woff2");
+}/* cinzel-latin-800-normal */
+@font-face {
+  font-family: 'Cinzel';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 800;
+  src: url(/fonts/cinzel-latin-800-normal.woff2) format("woff2");
+}/* jetbrains-mono-latin-300-normal */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(/fonts/jetbrains-mono-latin-300-normal.woff2) format("woff2");
+}/* jetbrains-mono-latin-400-normal */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/jetbrains-mono-latin-400-normal.woff2) format("woff2");
+}/* jetbrains-mono-latin-500-normal */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/fonts/jetbrains-mono-latin-500-normal.woff2) format("woff2");
+}/* jetbrains-mono-latin-600-normal */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/fonts/jetbrains-mono-latin-600-normal.woff2) format("woff2");
+}/* jetbrains-mono-latin-400-italic */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/jetbrains-mono-latin-400-italic.woff2) format("woff2");
+}/* outfit-latin-300-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(/fonts/outfit-latin-300-normal.woff2) format("woff2");
+}/* outfit-latin-400-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/outfit-latin-400-normal.woff2) format("woff2");
+}/* outfit-latin-500-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(/fonts/outfit-latin-500-normal.woff2) format("woff2");
+}/* outfit-latin-600-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url(/fonts/outfit-latin-600-normal.woff2) format("woff2");
+}/* outfit-latin-700-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url(/fonts/outfit-latin-700-normal.woff2) format("woff2");
+}/* outfit-latin-ext-400-normal */
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/outfit-latin-ext-400-normal.woff2) format("woff2");
+}

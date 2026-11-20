@@ -1,0 +1,376 @@
+/* ==========================================================================
+   MATERIAL YOU SURFACES + MOTION SYSTEM
+   ========================================================================== */
+:root,
+[data-theme] {
+  /* Tonal surfaces tinted by the theme accent (Material You style) */
+  --surface-container: color-mix(in srgb, color-mix(in srgb, var(--bg-secondary) 70%, var(--bg-elevated)) 94%, var(--accent-cyan));
+  --surface-container-high: color-mix(in srgb, var(--bg-elevated) 90%, var(--accent-cyan));
+  --state-hover: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  --state-press: color-mix(in srgb, var(--text-primary) 12%, transparent);
+
+  /* Motion curves */
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-spring-soft: cubic-bezier(0.34, 1.25, 0.64, 1);
+  --ease-emph: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emph-decel: cubic-bezier(0.05, 0.7, 0.1, 1);
+}
+
+/* ----------------------------------------------------------- shared keyframes */
+@keyframes itemIn {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.4); }
+}
+
+/* ------------------------------------------------- springy press on everything */
+.pill-btn,
+.pill-icon,
+.sb-icon-btn,
+.sb-nav-item,
+.sb-chapter,
+.sb-book,
+.sb-add-chapter,
+.tb-crumb,
+.tb-menu-item,
+.sb-menu button,
+.m3-btn,
+.m3-chip,
+.m3-dialog-close-btn,
+.m3-segmented-tab,
+.settings-nav-item,
+.settings-choice,
+.settings-theme,
+.settings-lang button,
+.editor-action,
+.editor-icon-btn,
+.book-card,
+.bk-toast-close {
+  transition:
+    background-color calc(220ms * var(--motion-scale, 1)) var(--ease-emph),
+    color calc(220ms * var(--motion-scale, 1)) var(--ease-emph),
+    border-color calc(220ms * var(--motion-scale, 1)) var(--ease-emph),
+    box-shadow calc(300ms * var(--motion-scale, 1)) var(--ease-emph),
+    opacity calc(220ms * var(--motion-scale, 1)) var(--ease-emph),
+    transform calc(480ms * var(--motion-scale, 1)) var(--ease-spring);
+}
+
+.pill-btn:active:not(:disabled),
+.pill-icon:active,
+.sb-icon-btn:active,
+.m3-btn:active:not(:disabled),
+.m3-chip:active:not(:disabled),
+.m3-dialog-close-btn:active,
+.editor-action:active:not(:disabled),
+.editor-icon-btn:active,
+.settings-lang button:active {
+  transform: scale(0.9);
+  transition-duration: calc(120ms * var(--motion-scale, 1));
+}
+
+.sb-nav-item:active,
+.sb-chapter:active,
+.sb-book:active,
+.tb-menu-item:active,
+.sb-menu button:active,
+.settings-nav-item:active,
+.m3-segmented-tab:active,
+.sb-add-chapter:active {
+  transform: scale(0.96);
+  transition-duration: calc(120ms * var(--motion-scale, 1));
+}
+
+.settings-choice:active:not(:disabled),
+.settings-theme:active,
+.book-card:active {
+  transform: scale(0.97);
+  transition-duration: calc(120ms * var(--motion-scale, 1));
+}
+
+/* Disable the old global press so springs are not doubled */
+button:not(:disabled):active {
+  transform: none;
+}
+
+/* ------------------------------------------------------------------ ripples */
+.bk-ripple-layer {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.bk-ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.18;
+  transform: scale(0);
+  animation: rippleGrow calc(560ms * var(--motion-scale, 1)) var(--ease-emph-decel) forwards;
+}
+
+.bk-ripple.is-fading {
+  opacity: 0;
+  transition: opacity calc(480ms * var(--motion-scale, 1)) ease-out;
+}
+
+@keyframes rippleGrow {
+  to { transform: scale(1); }
+}
+
+/* ------------------------------------------------- icon micro-interactions */
+button svg,
+[role='button'] svg {
+  transition: transform calc(520ms * var(--motion-scale, 1)) var(--ease-spring), color calc(220ms * var(--motion-scale, 1)) var(--ease-emph);
+}
+
+button:hover svg,
+[role='button']:hover svg {
+  transform: scale(1.12);
+}
+
+button:hover svg.animate-spin {
+  transform: none;
+}
+
+button:hover .ic-spin { transform: rotate(120deg) scale(1.05); }
+button:hover .ic-spin-slow { transform: rotate(-45deg) scale(1.08); }
+button:hover .ic-rotate { transform: rotate(90deg) scale(1.12); }
+button:hover .ic-pop { transform: scale(1.22); }
+button:hover .ic-pinch { transform: scale(0.82); }
+button:hover .ic-nudge { transform: translateX(3px) scale(1.06); }
+button:hover .ic-nudge-left { transform: translateX(-3px) scale(1.06); }
+button:hover .ic-twinkle { animation: twinkle calc(700ms * var(--motion-scale, 1)) var(--ease-spring); }
+button:hover .ic-bob { animation: bob calc(620ms * var(--motion-scale, 1)) var(--ease-spring); }
+button:hover .ic-wiggle { animation: wiggle calc(560ms * var(--motion-scale, 1)) var(--ease-emph); }
+button:hover .ic-drop { animation: drop calc(620ms * var(--motion-scale, 1)) var(--ease-spring); }
+button:hover .ic-wave { animation: wave calc(700ms * var(--motion-scale, 1)) var(--ease-emph); }
+button:hover .ic-shake { animation: shake calc(420ms * var(--motion-scale, 1)) var(--ease-emph); }
+.ic-rain { animation: bobLoop 2.4s ease-in-out infinite; }
+
+@keyframes twinkle {
+  0% { transform: scale(1) rotate(0); }
+  40% { transform: scale(1.35) rotate(18deg); }
+  100% { transform: scale(1.12) rotate(0); }
+}
+
+@keyframes bob {
+  0% { transform: translateY(0); }
+  40% { transform: translateY(-4px) scale(1.08); }
+  100% { transform: translateY(0) scale(1.1); }
+}
+
+@keyframes bobLoop {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0) scale(1.1); }
+  25% { transform: rotate(-14deg) scale(1.12); }
+  50% { transform: rotate(10deg) scale(1.12); }
+  75% { transform: rotate(-5deg) scale(1.1); }
+}
+
+@keyframes drop {
+  0% { transform: translateY(0); }
+  45% { transform: translateY(4px) scale(1.05); }
+  100% { transform: translateY(0) scale(1.1); }
+}
+
+@keyframes wave {
+  0%, 100% { transform: scale(1.1); }
+  30% { transform: scale(1.25) rotate(-6deg); }
+  60% { transform: scale(1.05) rotate(4deg); }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+
+/* ------------------------------------------------------- sliding indicators */
+.slide-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  pointer-events: none;
+  transition:
+    transform calc(560ms * var(--motion-scale, 1)) var(--ease-spring-soft),
+    width calc(560ms * var(--motion-scale, 1)) var(--ease-spring-soft),
+    height calc(560ms * var(--motion-scale, 1)) var(--ease-spring-soft),
+    opacity calc(200ms * var(--motion-scale, 1)) var(--ease-emph);
+}
+
+.has-indicator {
+  position: relative;
+}
+
+.has-indicator > :not(.slide-indicator) {
+  position: relative;
+  z-index: 1;
+}
+
+/* ------------------------------------------------- circular theme reveal */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+::view-transition-old(root) {
+  z-index: 1;
+}
+
+::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* Chapter switch: the page glides in */
+.editor-column.page-enter {
+  animation: pageIn calc(560ms * var(--motion-scale, 1)) var(--ease-emph-decel) both;
+}
+
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.99); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-ripple { display: none; }
+  .slide-indicator { transition: none; }
+}
+
+/* ==========================================================================
+   INDICATOR SKINS
+   ========================================================================== */
+.tab-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-strip-indicator {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 30%, transparent);
+}
+
+.tab-strip-tab {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 40px;
+  padding: 0 1.05rem;
+  border-radius: 999px;
+  font-size: 0.83rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color calc(260ms * var(--motion-scale, 1)) var(--ease-emph), transform calc(480ms * var(--motion-scale, 1)) var(--ease-spring), background-color calc(220ms * var(--motion-scale, 1)) var(--ease-emph);
+}
+
+.tab-strip-tab:hover:not(.is-active) {
+  color: var(--text-primary);
+  background: var(--state-hover);
+}
+
+.tab-strip-tab:active {
+  transform: scale(0.94);
+  transition-duration: calc(120ms * var(--motion-scale, 1));
+}
+
+.tab-strip-tab.is-active {
+  color: var(--accent-cyan);
+}
+
+.nav-indicator {
+  border-radius: 16px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-cyan) 25%, transparent);
+}
+
+.settings-nav-item.is-active {
+  background: transparent;
+  color: var(--accent-cyan);
+}
+
+.choice-indicator {
+  border-radius: 18px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent-cyan);
+}
+
+.has-indicator > .settings-choice-active,
+.has-indicator > .settings-choice-active:hover:not(:disabled) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.lang-indicator {
+  border-radius: 999px;
+  background: var(--accent-cyan);
+}
+
+.settings-lang .settings-lang-active {
+  background: transparent;
+  color: var(--on-accent);
+  box-shadow: none;
+}
+
+.theme-indicator {
+  border-radius: 20px;
+  box-shadow: 0 0 0 3px var(--accent-cyan), 0 14px 30px -10px color-mix(in srgb, var(--accent-cyan) 60%, transparent);
+}
+
+.settings-theme-active {
+  box-shadow: none;
+}
+
+/* Rounder, softer containers inside dialogs */
+.settings-section { border-radius: 22px; background: var(--surface-container-high); }
+.settings-choice { border-radius: 18px; }
+.settings-theme { border-radius: 20px; }
+.settings-input { border-radius: 14px; }
+.settings-nav-item { border-radius: 16px; height: 44px; }
+.settings-nav { background: transparent; }
+.settings-lang { border-radius: 999px; padding: 4px; }
+.settings-lang button { border-radius: 999px; height: 28px; padding: 0 0.8rem; }
+.book-card { border-radius: 24px; }
+.bk-confirm { border-radius: 28px; background: var(--surface-container); }
+.bk-toast { border-radius: 18px; background: var(--surface-container-high); }
+.bk-dialog-footer { background: transparent; border-top-color: var(--hairline); }
+.editor-selection-popup,
+.ai-suggestion-card { border-radius: 24px; background: var(--surface-container-high); }
+
+/* Dialog content enters with a soft stagger */
+.settings-stack > * {
+  animation: itemIn calc(520ms * var(--motion-scale, 1)) var(--ease-emph-decel) both;
+}
+
+.settings-stack > *:nth-child(2) { animation-delay: calc(40ms * var(--motion-scale, 1)); }
+.settings-stack > *:nth-child(3) { animation-delay: calc(80ms * var(--motion-scale, 1)); }
+.settings-stack > *:nth-child(4) { animation-delay: calc(120ms * var(--motion-scale, 1)); }
+.settings-stack > *:nth-child(5) { animation-delay: calc(160ms * var(--motion-scale, 1)); }
+.settings-stack > *:nth-child(n + 6) { animation-delay: calc(200ms * var(--motion-scale, 1)); }
+
+.settings-theme {
+  animation: itemIn calc(520ms * var(--motion-scale, 1)) var(--ease-emph-decel) both;
+}
+
+.settings-theme:hover {
+  transform: translateY(-3px);
+}

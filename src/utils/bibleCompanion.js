@@ -1,40 +1,61 @@
-import { fetchAIWithUsage, parseJsonSafe, extractJsonFromMarkdown } from './aiService';
+import { callLLM, hasAIProvider, parseJsonResponse } from './llm';
+import { translate } from './i18n';
 
 /**
- * Auto-extract entities from current chapter text
+ * Auto-extract characters, places and plot beats from the current chapter.
+ * Uses the configured AI provider when available, otherwise a local heuristic.
  */
 export async function extractBibleEntities({ chapterTitle, chapterContent, currentBible = {}, settings = {} }) {
   if (!chapterContent || chapterContent.trim().length < 40) {
     return { characters: [], locations: [], plotBeats: [], newlyDiscoveredCount: 0 };
   }
 
-  const { aiProvider, geminiApiKey, geminiModel, openaiApiKey, openaiEndpoint, openaiModel, ollamaEndpoint, ollamaModel } = settings;
-
-  // 1. Try remote AI if available
-  if (aiProvider === 'gemini' && geminiApiKey) {
+  if (hasAIProvider(settings)) {
     try {
-      const result = await extractWithGemini({ chapterTitle, chapterContent, currentBible, apiKey: geminiApiKey, model: geminiModel });
-      if (result) return mergeWithExistingBible(result, currentBible, chapterContent);
+      const result = await extractWithAI({ chapterTitle, chapterContent, currentBible, settings });
+      return mergeWithExistingBible(result, currentBible, chapterContent);
     } catch (err) {
-      console.warn('Gemini Bible extraction failed; preserving current Bible:', err);
-      return { updatedBible: currentBible, newlyDiscoveredCount: 0, extracted: { characters: [], locations: [], plotBeats: [] }, error: err.message };
-    }
-  } else if ((aiProvider === 'openai' && openaiApiKey) || aiProvider === 'ollama') {
-    try {
-      const endpoint = aiProvider === 'ollama' ? ollamaEndpoint : openaiEndpoint;
-      const model = aiProvider === 'ollama' ? ollamaModel : openaiModel;
-      const key = aiProvider === 'ollama' ? 'ollama' : openaiApiKey;
-      const result = await extractWithOpenAICompatible({ chapterTitle, chapterContent, currentBible, endpoint, model, apiKey: key });
-      if (result) return mergeWithExistingBible(result, currentBible, chapterContent);
-    } catch (err) {
-      console.warn('OpenAI/Ollama Bible extraction failed; preserving current Bible:', err);
+      console.warn('AI Bible extraction failed; preserving current Bible:', err);
       return { updatedBible: currentBible, newlyDiscoveredCount: 0, extracted: { characters: [], locations: [], plotBeats: [] }, error: err.message };
     }
   }
 
-  // 2. High-Precision Local Heuristic Extraction (Offline Companion)
   const localResult = extractLocalHeuristics(chapterTitle, chapterContent, currentBible);
   return mergeWithExistingBible(localResult, currentBible, chapterContent);
+}
+
+async function extractWithAI({ chapterTitle, chapterContent, currentBible, settings }) {
+  const knownCharacters = (currentBible.characters || []).map(character => character.name).filter(Boolean);
+  const knownLocations = [...(currentBible.worldNotes || '').matchAll(/\[([^\]]+)\]/g)].map(match => match[1]);
+
+  const prompt = `Sei un curatore prudente della Bibbia del Romanzo. Estrai solo entità esplicitamente presenti nel capitolo, senza dedurle da parole maiuscole, oggetti o descrizioni generiche.
+PERSONAGGI: una voce per persona e sempre il nome completo. Non dividere nome e cognome in personaggi distinti; unisci le varianti chiaramente riferite alla stessa persona. Se un nome è già nella Bibbia, riusa esattamente la forma canonica.
+LUOGHI: inserisci solo luoghi con un nome proprio esplicitamente citato (per esempio una città chiamata KAVALA). Non trasformare una stanza, un odore, un edificio generico o una parola a inizio frase in un luogo distinto. Riusa la forma canonica già presente.
+SNODI DI TRAMA: solo eventi narrativi effettivi, non domande retoriche o dettagli d'ambiente.
+
+PERSONAGGI CANONICI ESISTENTI: ${JSON.stringify(knownCharacters)}
+LUOGHI CANONICI ESISTENTI: ${JSON.stringify(knownLocations)}
+
+Analizza il capitolo "${chapterTitle}". Per ogni personaggio: name, role, goal, flaw, notes. Per ogni luogo: title, category, description. Per ogni snodo: title, tensionLevel, summary. Se un'entità non è certa o non è nominata nel testo, omettila.
+
+TESTO DEL CAPITOLO:
+"""
+${chapterContent.slice(0, 3500)}
+"""
+
+Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
+{
+  "characters": [ { "name": "...", "role": "...", "goal": "...", "flaw": "...", "notes": "..." } ],
+  "locations": [ { "title": "...", "category": "...", "description": "..." } ],
+  "plotBeats": [ { "title": "...", "tensionLevel": "...", "summary": "..." } ]
+}`;
+
+  const raw = await callLLM(settings, { prompt, json: true, temperature: 0.3, maxTokens: 2048, effort: 'low' });
+  const parsed = parseJsonResponse(raw, null);
+  if (!parsed || !Array.isArray(parsed.characters) || !Array.isArray(parsed.locations)) {
+    throw new Error(translate('ai.errorInvalidBible', settings.language || 'it'));
+  }
+  return { ...parsed, plotBeats: Array.isArray(parsed.plotBeats) ? parsed.plotBeats : [] };
 }
 
 /**
@@ -145,108 +166,6 @@ function extractLocalHeuristics(chapterTitle, text, currentBible) {
   }
 
   return { characters, locations, plotBeats };
-}
-
-/**
- * AI Extraction via Gemini API
- */
-async function extractWithGemini({ chapterTitle, chapterContent, currentBible, apiKey, model }) {
-  const modelName = model || 'gemini-1.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
-  const knownCharacters = (currentBible.characters || []).map(character => character.name).filter(Boolean);
-  const knownLocations = [...(currentBible.worldNotes || '').matchAll(/\[([^\]]+)\]/g)].map(match => match[1]);
-
-  const prompt = `Sei un curatore prudente della Bibbia del Romanzo. Estrai solo entità esplicitamente presenti nel capitolo, senza dedurle da parole maiuscole, oggetti o descrizioni generiche.
-PERSONAGGI: una voce per persona e sempre il nome completo. Non dividere nome e cognome in personaggi distinti; unisci le varianti chiaramente riferite alla stessa persona. Se un nome è già nella Bibbia, riusa esattamente la forma canonica.
-LUOGHI: inserisci solo luoghi con un nome proprio esplicitamente citato (per esempio una città chiamata KAVALA). Non trasformare una stanza, un odore, un edificio generico o una parola a inizio frase in un luogo distinto. Riusa la forma canonica già presente.
-SNODI DI TRAMA: solo eventi narrativi effettivi, non domande retoriche o dettagli d'ambiente.
-
-PERSONAGGI CANONICI ESISTENTI: ${JSON.stringify(knownCharacters)}
-LUOGHI CANONICI ESISTENTI: ${JSON.stringify(knownLocations)}
-
-Analizza il capitolo "${chapterTitle}". Per ogni personaggio: name, role, goal, flaw, notes. Per ogni luogo: title, category, description. Per ogni snodo: title, tensionLevel, summary. Se un'entità non è certa o non è nominata nel testo, omettila.
-
-TESTO DEL CAPITOLO:
-"""
-${chapterContent.slice(0, 3500)}
-"""
-
-Rispondi ESCLUSIVAMENTE in formato JSON con la seguente struttura:
-{
-  "characters": [ { "name": "...", "role": "...", "goal": "...", "flaw": "...", "notes": "..." } ],
-  "locations": [ { "title": "...", "category": "...", "description": "..." } ],
-  "plotBeats": [ { "title": "...", "tensionLevel": "...", "summary": "..." } ]
-}`;
-
-  const res = await fetchAIWithUsage(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.3, maxOutputTokens: 2048 }
-    })
-  });
-
-  if (!res.ok) throw new Error(`Gemini error ${res.status}`);
-  const data = await res.json();
-  const raw = (data.candidates?.[0]?.content?.parts || [])
-    .map(part => part.text || '')
-    .join('')
-    .trim();
-  const parsed = parseJsonSafe(extractJsonFromMarkdown(raw), null);
-  if (!parsed || !Array.isArray(parsed.characters) || !Array.isArray(parsed.locations)) {
-    throw new Error('Gemini ha restituito una Bibbia non valida.');
-  }
-  return parsed;
-}
-
-/**
- * AI Extraction via OpenAI Compatible API
- */
-async function extractWithOpenAICompatible({ chapterTitle, chapterContent, currentBible, endpoint, model, apiKey }) {
-  const cleanEndpoint = endpoint.replace(/\/+$/, '');
-  const url = `${cleanEndpoint}/chat/completions`;
-  const knownCharacters = (currentBible.characters || []).map(character => character.name).filter(Boolean);
-  const knownLocations = [...(currentBible.worldNotes || '').matchAll(/\[([^\]]+)\]/g)].map(match => match[1]);
-
-  const prompt = `Sei un curatore prudente della Bibbia del Romanzo. Estrai solo entità esplicitamente presenti nel capitolo, senza dedurle da parole maiuscole, oggetti o descrizioni generiche.
-PERSONAGGI: una voce per persona e sempre il nome completo. Non dividere nome e cognome in personaggi distinti; unisci le varianti chiaramente riferite alla stessa persona. Se un nome è già nella Bibbia, riusa esattamente la forma canonica.
-LUOGHI: inserisci solo luoghi con un nome proprio esplicitamente citato. Non trasformare una stanza, un odore, un edificio generico o una parola a inizio frase in un luogo distinto. Riusa la forma canonica già presente.
-SNODI DI TRAMA: solo eventi narrativi effettivi, non domande retoriche o dettagli d'ambiente.
-PERSONAGGI CANONICI ESISTENTI: ${JSON.stringify(knownCharacters)}
-LUOGHI CANONICI ESISTENTI: ${JSON.stringify(knownLocations)}
-Analizza "${chapterTitle}" e restituisci soltanto JSON valido:
-{
-  "characters": [ { "name": "...", "role": "...", "goal": "...", "flaw": "...", "notes": "..." } ],
-  "locations": [ { "title": "...", "category": "...", "description": "..." } ],
-  "plotBeats": [ { "title": "...", "tensionLevel": "...", "summary": "..." } ]
-}
-
-TESTO:
-${chapterContent.slice(0, 3500)}`;
-
-  const headers = { 'Content-Type': 'application/json' };
-  if (apiKey && apiKey !== 'ollama') headers['Authorization'] = `Bearer ${apiKey}`;
-
-  const res = await fetchAIWithUsage(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model: model || 'gpt-4o-mini',
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 2048
-    })
-  });
-
-  if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content || '';
-  const parsed = parseJsonSafe(extractJsonFromMarkdown(content), null);
-  if (!parsed || !Array.isArray(parsed.characters) || !Array.isArray(parsed.locations)) {
-    throw new Error('Il provider AI ha restituito una Bibbia non valida.');
-  }
-  return parsed;
 }
 
 /**

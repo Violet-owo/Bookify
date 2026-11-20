@@ -1,301 +1,307 @@
-// Real Local File Sync & Native Desktop Storage Engine for Bookify
-// Native File System Access API with IndexedDB handle persistence,
-// ensuring the user edits the SAME file on PC in-place without generating duplicates.
+// Local file sync for Bookify.
+//
+// Every book remembers ITS OWN file on disk. Switching book in the library never
+// redirects saves to another book's file (that used to overwrite manuscripts).
+//
+// - Tauri (desktop): files are read/written by the Rust backend; the per-book
+//   link { path, fileName } is kept in localStorage.
+// - Browser (dev / web preview): File System Access API handles are kept in
+//   IndexedDB, keyed by book id. Falls back to a download when unsupported.
 import { invoke } from '@tauri-apps/api/core';
 
 const DB_NAME = 'bookify_fs_db';
 const STORE_NAME = 'handles';
-const KEY_ACTIVE_HANDLE = 'active_book_file_handle';
-const KEY_TAURI_FILE_PATH = 'bookify_tauri_file_path';
-const KEY_TAURI_FILE_NAME = 'bookify_tauri_file_name';
+const LINKS_KEY = 'bookify_file_links_v1';
 
-let activeFileHandle = null;
-let activeFileName = typeof localStorage !== 'undefined' ? localStorage.getItem(KEY_TAURI_FILE_NAME) || '' : '';
-let activeTauriFilePath = typeof localStorage !== 'undefined' ? localStorage.getItem(KEY_TAURI_FILE_PATH) || '' : '';
+// Legacy single-file keys (pre per-book links)
+const LEGACY_HANDLE_KEY = 'active_book_file_handle';
+const LEGACY_TAURI_PATH = 'bookify_tauri_file_path';
+const LEGACY_TAURI_NAME = 'bookify_tauri_file_name';
 
-function isTauriRuntime() {
-  return typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window || Boolean(window.__TAURI_INTERNALS__));
+const handleCache = new Map();
+
+export function isTauriRuntime() {
+  return typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__);
 }
 
-// Initialize IndexedDB database for persisting FileSystemFileHandle across reloads
+// ---------------------------------------------------------------------------
+// Link registry (bookId -> { path?, fileName })
+// ---------------------------------------------------------------------------
+function readLinks() {
+  try {
+    return JSON.parse(localStorage.getItem(LINKS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLinks(links) {
+  try {
+    localStorage.setItem(LINKS_KEY, JSON.stringify(links));
+  } catch (err) {
+    console.warn('Impossibile salvare i collegamenti ai file:', err);
+  }
+}
+
+function setLink(bookId, link) {
+  if (!bookId) return;
+  const links = readLinks();
+  if (link) links[bookId] = link;
+  else delete links[bookId];
+  writeLinks(links);
+}
+
+export function getConnectedFileName(bookId) {
+  return (bookId && readLinks()[bookId]?.fileName) || null;
+}
+
+/**
+ * One-time migration from the old global "connected file" to a per-book link.
+ * The old file is attributed to the book that was active at startup.
+ */
+export async function migrateLegacyFileLink(bookId) {
+  if (!bookId) return;
+  try {
+    const legacyPath = localStorage.getItem(LEGACY_TAURI_PATH);
+    const legacyName = localStorage.getItem(LEGACY_TAURI_NAME);
+    if (legacyPath && !readLinks()[bookId]) {
+      setLink(bookId, { path: legacyPath, fileName: legacyName || legacyPath.split(/[\\/]/).pop() });
+    }
+    localStorage.removeItem(LEGACY_TAURI_PATH);
+    localStorage.removeItem(LEGACY_TAURI_NAME);
+
+    if (!isTauriRuntime()) {
+      const legacyHandle = await idbGet(LEGACY_HANDLE_KEY);
+      if (legacyHandle) {
+        if (!readLinks()[bookId]) {
+          await idbPut(handleKey(bookId), legacyHandle);
+          setLink(bookId, { fileName: legacyHandle.name });
+        }
+        await idbDelete(LEGACY_HANDLE_KEY);
+      }
+    }
+  } catch (err) {
+    console.warn('Migrazione collegamento file non riuscita:', err);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// IndexedDB helpers (browser only)
+// ---------------------------------------------------------------------------
+const handleKey = (bookId) => `handle:${bookId}`;
+
 function openDB() {
   return new Promise((resolve, reject) => {
-    if (typeof indexedDB === 'undefined') {
-      return resolve(null);
-    }
+    if (typeof indexedDB === 'undefined') return resolve(null);
     const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        db.createObjectStore(STORE_NAME);
-      }
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });
 }
 
-async function persistHandleToIDB(handle) {
-  try {
-    const db = await openDB();
-    if (!db) return;
-    const tx = db.transaction(STORE_NAME, 'readwrite');
-    tx.objectStore(STORE_NAME).put(handle, KEY_ACTIVE_HANDLE);
-    return new Promise((resolve) => {
-      tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-    });
-  } catch (err) {
-    console.warn('Failed to persist file handle in IndexedDB:', err);
-  }
+async function idbRequest(mode, run) {
+  const db = await openDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    const tx = db.transaction(STORE_NAME, mode);
+    const req = run(tx.objectStore(STORE_NAME));
+    tx.oncomplete = () => resolve(req?.result ?? null);
+    tx.onerror = () => resolve(null);
+  });
 }
 
-async function getPersistedHandleFromIDB() {
-  try {
-    const db = await openDB();
-    if (!db) return null;
-    const tx = db.transaction(STORE_NAME, 'readonly');
-    const req = tx.objectStore(STORE_NAME).get(KEY_ACTIVE_HANDLE);
-    return new Promise((resolve) => {
-      req.onsuccess = () => resolve(req.result || null);
-      req.onerror = () => resolve(null);
-    });
-  } catch (err) {
-    console.warn('Failed to retrieve file handle from IndexedDB:', err);
-    return null;
-  }
+const idbGet = (key) => idbRequest('readonly', (store) => store.get(key));
+const idbPut = (key, value) => idbRequest('readwrite', (store) => store.put(value, key));
+const idbDelete = (key) => idbRequest('readwrite', (store) => store.delete(key));
+
+async function getHandle(bookId) {
+  if (handleCache.has(bookId)) return handleCache.get(bookId);
+  const handle = await idbGet(handleKey(bookId)).catch(() => null);
+  if (handle) handleCache.set(bookId, handle);
+  return handle;
 }
 
-// Auto-restore persisted file handle on module load
-(async () => {
-  try {
-    const savedHandle = await getPersistedHandleFromIDB();
-    if (savedHandle) {
-      activeFileHandle = savedHandle;
-      activeFileName = savedHandle.name;
-    }
-  } catch {}
-})();
+async function writeHandle(handle, content) {
+  const writable = await handle.createWritable();
+  await writable.write(content);
+  await writable.close();
+}
+
+export const supportsFileSystemAccess = () =>
+  typeof window !== 'undefined' && 'showSaveFilePicker' in window;
+
+function suggestedFileName(book) {
+  const base = (book.title || 'Mio_Romanzo').replace(/[^a-zA-Z0-9_À-ſ-]/g, '_');
+  return `${base}.bookify`;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /**
- * Check if the browser supports native direct File System Access API
+ * Save the book to its own linked file. When the book has no file yet (or
+ * `chooseNewFile` is true) the user picks where to save it, once.
  */
-export const supportsFileSystemAccess = () => {
-  return typeof window !== 'undefined' && 'showSaveFilePicker' in window;
-};
-
-/**
- * Save Entire Book or Project IN-PLACE to the connected file on PC.
- * If already connected, writes directly without prompting or downloading a new file!
- */
-export async function saveProjectToDiskFile(bookData, preferredName = '') {
-  const defaultName = preferredName || `${(bookData.title || 'Mio_Romanzo').replace(/[^a-zA-Z0-9_\u00C0-\u017F-]/g, '_')}.bookify`;
-  const fileContent = JSON.stringify(bookData, null, 2);
+export async function saveProjectToDiskFile(book, { chooseNewFile = false } = {}) {
+  const content = JSON.stringify(book, null, 2);
+  const defaultName = suggestedFileName(book);
+  const link = chooseNewFile ? null : readLinks()[book.id];
 
   if (isTauriRuntime()) {
-    const savedFile = await invoke('save_bookify_file', {
-      contents: fileContent,
+    const saved = await invoke('save_bookify_file', {
+      contents: content,
       defaultName,
-      path: activeTauriFilePath || null
+      path: link?.path || null
     });
-    if (!savedFile) return { success: false, cancelled: true };
-    activeTauriFilePath = savedFile.path;
-    activeFileName = savedFile.fileName;
-    localStorage.setItem(KEY_TAURI_FILE_PATH, activeTauriFilePath);
-    localStorage.setItem(KEY_TAURI_FILE_NAME, activeFileName);
-    return { success: true, fileName: activeFileName, isDirectDisk: true };
+    if (!saved) return { success: false, cancelled: true };
+    setLink(book.id, { path: saved.path, fileName: saved.fileName });
+    return { success: true, fileName: saved.fileName, isDirectDisk: true };
   }
 
-  // 1. If we already have an active connected file handle on the PC, write directly to it!
-  if (!activeFileHandle) {
-    activeFileHandle = await getPersistedHandleFromIDB();
-    if (activeFileHandle) {
-      activeFileName = activeFileHandle.name;
+  if (!chooseNewFile) {
+    const handle = await getHandle(book.id);
+    if (handle) {
+      try {
+        let perm = await handle.queryPermission({ mode: 'readwrite' });
+        if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'readwrite' });
+        if (perm === 'granted') {
+          await writeHandle(handle, content);
+          return { success: true, fileName: handle.name, isDirectDisk: true };
+        }
+      } catch (err) {
+        console.warn('Scrittura sul file collegato non riuscita, chiedo un nuovo file:', err);
+      }
     }
   }
 
-  if (activeFileHandle) {
-    try {
-      // Query or request write permission if browser needs fresh user activation
-      let perm = await activeFileHandle.queryPermission({ mode: 'readwrite' });
-      if (perm !== 'granted') {
-        perm = await activeFileHandle.requestPermission({ mode: 'readwrite' });
-      }
-
-      if (perm === 'granted') {
-        const writable = await activeFileHandle.createWritable();
-        await writable.write(fileContent);
-        await writable.close();
-        return { success: true, fileName: activeFileName, isDirectDisk: true };
-      }
-    } catch (err) {
-      console.warn('Failed to write to existing handle, will request picker:', err);
-      activeFileHandle = null;
-    }
-  }
-
-  // 2. If not connected yet, ask the user to pick/create the file ONCE.
   if (supportsFileSystemAccess()) {
     try {
       const handle = await window.showSaveFilePicker({
         suggestedName: defaultName,
-        types: [
-          {
-            description: 'File Progetto Bookify (*.bookify)',
-            accept: { 'application/json': ['.bookify', '.json'] }
-          },
-          {
-            description: 'File Testo Semplice (*.txt)',
-            accept: { 'text/plain': ['.txt'] }
-          }
-        ]
+        types: [{ description: 'Progetto Bookify (*.bookify)', accept: { 'application/json': ['.bookify', '.json'] } }]
       });
-
-      const writable = await handle.createWritable();
-      await writable.write(fileContent);
-      await writable.close();
-
-      activeFileHandle = handle;
-      activeFileName = handle.name;
-      await persistHandleToIDB(handle);
-
+      await writeHandle(handle, content);
+      handleCache.set(book.id, handle);
+      await idbPut(handleKey(book.id), handle);
+      setLink(book.id, { fileName: handle.name });
       return { success: true, fileName: handle.name, isDirectDisk: true };
     } catch (err) {
-      if (err.name === 'AbortError') {
-        return { success: false, cancelled: true };
-      }
-      console.warn('File picker error:', err);
+      if (err.name === 'AbortError') return { success: false, cancelled: true };
+      console.warn('Errore selettore file:', err);
     }
   }
 
-  // 3. Fallback only if browser does not support File System Access at all
-  downloadBlob(fileContent, defaultName, 'application/json;charset=utf-8');
+  downloadBlob(content, defaultName, 'application/json;charset=utf-8');
   return { success: true, fileName: defaultName, isDirectDisk: false };
 }
 
+function parseProjectFile(contents) {
+  try {
+    return JSON.parse(contents);
+  } catch {
+    throw new Error('il file non è un progetto Bookify valido (JSON non leggibile)');
+  }
+}
+
 /**
- * Open a .bookify or .json project file from PC disk and connect it for direct in-place editing!
+ * Let the user pick a .bookify/.json file. Returns { data, fileName, source }
+ * where `source` must be passed to `linkBookToFile` once the caller knows
+ * which book id the file belongs to.
  */
 export async function openProjectFromDiskFile() {
   if (isTauriRuntime()) {
-    const openedFile = await invoke('open_bookify_file');
-    if (!openedFile) return { success: false, cancelled: true };
-    activeTauriFilePath = openedFile.path;
-    activeFileName = openedFile.fileName;
-    localStorage.setItem(KEY_TAURI_FILE_PATH, activeTauriFilePath);
-    localStorage.setItem(KEY_TAURI_FILE_NAME, activeFileName);
-    return { success: true, data: JSON.parse(openedFile.contents), fileName: activeFileName };
+    const opened = await invoke('open_bookify_file');
+    if (!opened) return { success: false, cancelled: true };
+    return {
+      success: true,
+      data: parseProjectFile(opened.contents),
+      fileName: opened.fileName,
+      source: { path: opened.path, fileName: opened.fileName }
+    };
   }
 
   if (supportsFileSystemAccess()) {
     try {
       const [handle] = await window.showOpenFilePicker({
-        types: [
-          {
-            description: 'File Progetto Bookify (*.bookify, *.json)',
-            accept: { 'application/json': ['.bookify', '.json'] }
-          }
-        ],
+        types: [{ description: 'Progetto Bookify (*.bookify, *.json)', accept: { 'application/json': ['.bookify', '.json'] } }],
         multiple: false
       });
-
       const file = await handle.getFile();
-      const content = await file.text();
-      const parsed = JSON.parse(content);
-
-      activeFileHandle = handle;
-      activeFileName = handle.name;
-      await persistHandleToIDB(handle);
-
-      return { success: true, data: parsed, fileName: handle.name };
+      return {
+        success: true,
+        data: parseProjectFile(await file.text()),
+        fileName: handle.name,
+        source: { handle, fileName: handle.name }
+      };
     } catch (err) {
       if (err.name === 'AbortError') return { success: false, cancelled: true };
-      console.error('Failed to open file from disk:', err);
+      throw err;
     }
   }
 
-  // Fallback file input
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = '.bookify,.json';
-    input.onchange = async (e) => {
-      const file = e.target.files?.[0];
-      if (!file) return resolve({ success: false });
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return resolve({ success: false, cancelled: true });
       try {
-        const text = await file.text();
-        const parsed = JSON.parse(text);
-        resolve({ success: true, data: parsed, fileName: file.name });
+        resolve({ success: true, data: parseProjectFile(await file.text()), fileName: file.name, source: null });
       } catch (err) {
-        resolve({ success: false, error: err.message });
+        reject(err);
       }
     };
     input.click();
   });
 }
 
-/**
- * Perform Autosave to PC disk if a file handle is connected.
- * In-place modification only; never triggers downloads!
- */
-export async function autosaveToConnectedDisk(bookData) {
-  if (isTauriRuntime()) {
-    if (!activeTauriFilePath) return false;
-    try {
-      await invoke('save_bookify_file', {
-        contents: JSON.stringify(bookData, null, 2),
-        defaultName: activeFileName || 'Mio_Romanzo.bookify',
-        path: activeTauriFilePath
-      });
-      return true;
-    } catch (err) {
-      console.warn('Autosave to disk failed:', err);
-      return false;
-    }
+/** Attach an opened file to a book so later saves go back to that same file. */
+export async function linkBookToFile(bookId, source) {
+  if (!bookId || !source) return;
+  if (source.handle) {
+    handleCache.set(bookId, source.handle);
+    await idbPut(handleKey(bookId), source.handle);
+    setLink(bookId, { fileName: source.fileName });
+  } else if (source.path) {
+    setLink(bookId, { path: source.path, fileName: source.fileName });
   }
+}
 
-  if (!activeFileHandle) {
-    activeFileHandle = await getPersistedHandleFromIDB();
-  }
-  if (!activeFileHandle) return false;
+/** Silent autosave to the book's linked file. Never opens dialogs. */
+export async function autosaveToConnectedDisk(book) {
+  if (!book?.id) return false;
+  const link = readLinks()[book.id];
+  if (!link) return false;
+  const content = JSON.stringify(book, null, 2);
 
   try {
-    const perm = await activeFileHandle.queryPermission({ mode: 'readwrite' });
-    if (perm !== 'granted') return false;
-
-    const writable = await activeFileHandle.createWritable();
-    await writable.write(JSON.stringify(bookData, null, 2));
-    await writable.close();
+    if (isTauriRuntime()) {
+      if (!link.path) return false;
+      await invoke('save_bookify_file', { contents: content, defaultName: link.fileName, path: link.path });
+      return true;
+    }
+    const handle = await getHandle(book.id);
+    if (!handle || (await handle.queryPermission({ mode: 'readwrite' })) !== 'granted') return false;
+    await writeHandle(handle, content);
     return true;
   } catch (err) {
-    console.warn('Autosave to disk failed:', err);
+    console.warn('Autosalvataggio su disco non riuscito:', err);
     return false;
   }
 }
 
-/**
- * Disconnect current file handle (to save to a different file)
- */
-export async function disconnectFileHandle() {
-  activeFileHandle = null;
-  activeFileName = '';
-  activeTauriFilePath = '';
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY_TAURI_FILE_PATH);
-  if (typeof localStorage !== 'undefined') localStorage.removeItem(KEY_TAURI_FILE_NAME);
-  try {
-    const db = await openDB();
-    if (db) {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      tx.objectStore(STORE_NAME).delete(KEY_ACTIVE_HANDLE);
-    }
-  } catch {}
-}
-
-/**
- * Get the currently connected file name, if any
- */
-export function getActiveConnectedFileName() {
-  return activeFileName || null;
+/** Forget the file linked to a book (e.g. when the book is deleted). */
+export async function disconnectBookFile(bookId) {
+  if (!bookId) return;
+  setLink(bookId, null);
+  handleCache.delete(bookId);
+  await idbDelete(handleKey(bookId)).catch(() => {});
 }
 
 function downloadBlob(content, filename, mimeType) {

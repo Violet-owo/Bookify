@@ -1,4 +1,5 @@
 import React from 'react';
+import { useI18n } from '../utils/i18n';
 
 /**
  * Computes a simple word-level diff between original and modified strings.
@@ -50,6 +51,7 @@ export function computeWordDiff(original = '', modified = '') {
  * Visual diff viewer component displaying highlighted changes
  */
 export default function DiffViewer({ original, modified, className = '' }) {
+  const { t } = useI18n();
   const diff = React.useMemo(() => computeWordDiff(original, modified), [original, modified]);
 
   const hasChanges = diff.some(d => d.type !== 'equal');
@@ -68,7 +70,7 @@ export default function DiffViewer({ original, modified, className = '' }) {
           border: '1px dashed var(--border-subtle)'
         }}
       >
-        <span>Nessuna differenza: il testo coincide esattamente con l'originale.</span>
+        <span>{t('diff.noChanges')}</span>
       </div>
     );
   }
@@ -96,14 +98,14 @@ export default function DiffViewer({ original, modified, className = '' }) {
             <mark
               key={index}
               style={{
-                backgroundColor: 'rgba(224, 109, 83, 0.22)',
+                backgroundColor: 'color-mix(in srgb, var(--accent-coral) 20%, transparent)',
                 color: 'var(--accent-coral)',
                 textDecoration: 'line-through',
                 padding: '0.08rem 0.25rem',
                 borderRadius: '3px',
                 margin: '0 1px'
               }}
-              title="Testo eliminato"
+              title={t('diff.removed')}
             >
               {part.text}
             </mark>
@@ -114,14 +116,14 @@ export default function DiffViewer({ original, modified, className = '' }) {
             <mark
               key={index}
               style={{
-                backgroundColor: 'rgba(125, 168, 123, 0.25)',
-                color: 'var(--accent-green, #7da87b)',
+                backgroundColor: 'color-mix(in srgb, var(--accent-green) 22%, transparent)',
+                color: 'var(--accent-green)',
                 fontWeight: '600',
                 padding: '0.08rem 0.25rem',
                 borderRadius: '3px',
                 margin: '0 1px'
               }}
-              title="Testo aggiunto"
+              title={t('diff.added')}
             >
               {part.text}
             </mark>
